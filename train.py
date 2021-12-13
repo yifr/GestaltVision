@@ -96,4 +96,3 @@ def train(dataset, model, epochs, config):
         print(
             f"[Epoch {epoch}] Average Loss: {running_loss / len(dataset)}, Total time taken: {epoch_end_time - epoch_start_time}."
         )
-

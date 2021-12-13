@@ -3,10 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class Transformer(nn.Module):
-    pass
-
-
 class ResidualLayer(nn.Module):
     """
     One residual layer inputs:
