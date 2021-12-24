@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import torch.functional as F
+import torch.nn.functional as F
 
 
 def scaled_dot_product(q, k, v, mask=None):
@@ -41,7 +41,7 @@ class MultiheadAttention(nn.Module):
         self.o_proj.bias.data.fill_(0)
 
     def forward(self, x, mask=None, return_attention=False):
-        batch_size, seq_length, embed_dim = x.size()
+        batch_size, seq_length, *embed_dim = x.size()
         qkv = self.qkv_proj(x)
 
         # Separate Q, K, V from linear output

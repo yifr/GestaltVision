@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from attention import MultiheadAttention, SlotAttention
+from Attention import MultiheadAttention, SlotAttention
 
 
 class Predictor(nn.Module):
@@ -14,7 +14,7 @@ class Predictor(nn.Module):
             dim_feedforward - Dimensionality of the hidden layer in the MLP
             dropout - Dropout probability to use in the dropout layers
         """
-        super().__init__()
+        super(Predictor, self).__init__()
 
         # Attention layer
         self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
@@ -65,7 +65,7 @@ class SoftPositionEmbedding(nn.Module):
         hidden_size: Size of input feature dimension.
         resolution: Tuple of integers specifying width and height of grid.
         """
-        super().__init__()
+        super(SoftPositionEmbedding, self).__init__()
         self.embedding = nn.Linear(4, hidden_size, bias=True)
         self.grid = build_grid(resolution)
 
@@ -296,4 +296,4 @@ class SlotAttentionVideo(nn.Module):
                 }
             )
 
-        return recon_combined, recons, masks, slots
+        return preds

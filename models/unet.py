@@ -189,7 +189,7 @@ class DepthwiseSeparableConv3d(nn.Module):
 
 
 if __name__ == "__main__":
-    from dorsalventral.data.CommonFate import CommonFate
+    from data.CommonFate import CommonFate
     from torch.utils.data import DataLoader
     import torchvision.transforms as T
 
