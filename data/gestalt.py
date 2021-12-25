@@ -172,8 +172,7 @@ class Gestalt(Dataset):
         length = len(scenes) * self.frames_per_scene * self.scene_splits
         return length
 
-    def __getitem__(self, idx):
-        # map indexes to scene splits
+    def get_info(self, idx):
         scene = int(idx / self.scene_splits)
         if self.frame_sampling_method == "consecutive":
             scene_block = idx % self.scene_splits
@@ -189,13 +188,19 @@ class Gestalt(Dataset):
         else:
             frame_idxs = np.arange(1, self.real_frames_per_scene + 1)
 
+        scene_dir = self.get_scenes(scene)
+        return scene, frame_idxs, scene_dir
+
+    def __getitem__(self, idx):
+        scene, frame_idxs, scene_dir = self.get_info(idx)
+
         # Load image passes
         data = {}
         for image_pass in self.passes:
             res = []
             if image_pass in IMAGE_PASS_OPTS:
                 if image_pass == "masks" or image_pass == "depths":
-                    color_channels = "1"
+                    color_channels = "L"
                     normalize = False
                 else:
                     color_channels = "RGB"
@@ -211,3 +216,4 @@ class Gestalt(Dataset):
             data[image_pass] = res
 
         return data
+

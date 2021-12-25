@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from Attention import MultiheadAttention, SlotAttention
+from .attention import MultiheadAttention, SlotAttention
 
 
 class Predictor(nn.Module):
@@ -158,10 +158,10 @@ class Initializer(nn.Module):
     Provides slot initialization for segmentation mask conditioning signals
     """
 
-    def __init__(self, hid_dim, resolution):
+    def __init__(self, input_dim, hid_dim, resolution):
         super(Initializer, self).__init__()
 
-        self.conv1 = nn.Conv2d(3, hid_dim, kernel_size=5, stride=2)
+        self.conv1 = nn.Conv2d(input_dim, hid_dim, kernel_size=5, stride=2)
         self.conv2 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=2)
         self.conv3 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=2)
         self.conv4 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=1)
@@ -182,6 +182,7 @@ class Initializer(nn.Module):
         self.layer_norm2 = nn.LayerNorm(hid_dim * 2)
 
     def forward(self, x):
+        print(x.shape)
         x = self.conv1(x)
         x = F.relu(x)
         x = self.conv2(x)
@@ -189,6 +190,7 @@ class Initializer(nn.Module):
         x = self.conv3(x)
         x = F.relu(x)
         x = self.conv4(x)
+        print(x.shape)
         x = self.pos_embed(x)
         x = self.layer_norm1(x)
         x = self.mlp1(x)
@@ -246,19 +248,20 @@ class SlotAttentionVideo(nn.Module):
         num_slots=8,
         slot_dim=64,
         slot_iterations=3,
+        initializer_dim=1
     ):
         super(SlotAttentionVideo, self).__init__()
 
         self.encoder = Encoder(hid_dim, resolution)
         self.decoder = Decoder(hid_dim, resolution)
-        self.initializer = Initializer(hid_dim, resolution)
+        self.initializer = Initializer(initializer_dim, hid_dim, resolution)
         self.predictor = Predictor(hid_dim, 4, 256)
         self.corrector = SlotAttention(
             slot_iterations, num_slots, slot_dim, slot_dim * 2
         )
 
     def forward(self, images, cues=None):
-        if cues:
+        if cues is not None:
             slot_initialization = self.initializer(cues)
         else:
             slot_initialization = None
