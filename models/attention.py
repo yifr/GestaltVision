@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def scaled_dot_product(q, k, v, mask=None):
     d_k = q.size()[-1]
@@ -15,9 +16,9 @@ def scaled_dot_product(q, k, v, mask=None):
     return values, attention
 
 
-class MultiheadAttention(nn.Module):
+class MultiHeadAttention(nn.Module):
     def __init__(self, input_dim, embed_dim, num_heads):
-        super(MultiheadAttention, self).__init__()
+        super(MultiHeadAttention, self).__init__()
         assert (
             embed_dim % num_heads == 0
         ), "Embedding dimension must be 0 modulo number of heads."
@@ -109,16 +110,17 @@ class SlotAttention(nn.Module):
         keys = self.keys(x)  # [batch_size, input_size, slot_dim]
         values = self.values(x)  # [batch_size, input_size, slot_dim]
 
-        mu = self.slots_mu.expand(b, self.num_slots, -1)
-        sigma = self.slots_log_sigma.exp().expand(b, self.num_slots, -1)
+        mu = self.slots_mu.expand(b, self.num_slots, -1).to(DEVICE)
+        sigma = self.slots_log_sigma.exp().expand(b, self.num_slots, -1).to(DEVICE)
 
         if slot_initialization is not None:
             slots = slot_initialization
         else:
             slots = mu + sigma * torch.randn(
-                mu.shape, device=x.device
+                mu.shape, device=DEVICE
             )  # [batch_size, num_slots, slot_dim]
 
+        slots = slots.to(DEVICE)
         for i in range(self.num_iterations):
             slots_prev = slots
             slots = self.slot_norm(slots)  # [batch_size, num_slots, slot_dim]

@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from .attention import MultiheadAttention, SlotAttention
+from .attention import MultiHeadAttention, SlotAttention
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 class Predictor(nn.Module):
     def __init__(self, input_dim, num_heads, dim_feedforward, dropout=0.0):
@@ -17,7 +18,7 @@ class Predictor(nn.Module):
         super(Predictor, self).__init__()
 
         # Attention layer
-        self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
+        self.self_attn = MultiHeadAttention(input_dim, input_dim, num_heads)
 
         # Two-layer MLP
         self.linear_net = nn.Sequential(
@@ -53,7 +54,7 @@ def build_grid(resolution):
     grid = np.reshape(grid, [resolution[0], resolution[1], -1])
     grid = np.expand_dims(grid, axis=0)
     grid = grid.astype(np.float32)
-    return torch.from_numpy(np.concatenate([grid, 1.0 - grid], axis=-1))
+    return torch.from_numpy(np.concatenate([grid, 1.0 - grid], axis=-1)).to(DEVICE)
 
 
 class SoftPositionEmbedding(nn.Module):
@@ -71,6 +72,7 @@ class SoftPositionEmbedding(nn.Module):
 
     def forward(self, inputs):
         grid = self.embedding(self.grid)
+        print(self.grid.shape, grid.shape, inputs.shape)
         return inputs + grid
 
 
@@ -160,7 +162,7 @@ class Initializer(nn.Module):
 
     def __init__(self, input_dim, hid_dim, resolution):
         super(Initializer, self).__init__()
-
+        print(input_dim, hid_dim)
         self.conv1 = nn.Conv2d(input_dim, hid_dim, kernel_size=5, stride=2)
         self.conv2 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=2)
         self.conv3 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=2)
@@ -252,13 +254,14 @@ class SlotAttentionVideo(nn.Module):
     ):
         super(SlotAttentionVideo, self).__init__()
 
-        self.encoder = Encoder(hid_dim, resolution)
-        self.decoder = Decoder(hid_dim, resolution)
-        self.initializer = Initializer(initializer_dim, hid_dim, resolution)
-        self.predictor = Predictor(hid_dim, 4, 256)
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.encoder = Encoder(hid_dim, resolution).to(self.device)
+        self.decoder = Decoder(hid_dim, resolution).to(self.device)
+        self.initializer = Initializer(initializer_dim, hid_dim // 2, resolution).to(self.device)
+        self.predictor = Predictor(hid_dim, 4, 256).to(self.device)
         self.corrector = SlotAttention(
             slot_iterations, num_slots, slot_dim, slot_dim * 2
-        )
+        ).to(self.device)
 
     def forward(self, images, cues=None):
         if cues is not None:
