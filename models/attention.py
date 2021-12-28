@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from einops import rearrange
 import torch.nn.functional as F
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def scaled_dot_product(q, k, v, mask=None):
     d_k = q.size()[-1]
@@ -17,50 +18,52 @@ def scaled_dot_product(q, k, v, mask=None):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, input_dim, embed_dim, num_heads):
+    def __init__(self, embed_dim, num_heads=4, dim_head=None):
+        """
+        implements MultiHead Self-Attention
+        Args:
+            embed_dim: dimension of token embedding
+            num_heads: how many heads to use
+            dim_head: head dimension (if None, will be dim / heads)
+        """
         super(MultiHeadAttention, self).__init__()
-        assert (
-            embed_dim % num_heads == 0
-        ), "Embedding dimension must be 0 modulo number of heads."
+        self.dim_head = (int(embed_dim / num_heads)) if dim_head is None else dim_head
+        _dim = self.dim_head * num_heads
+        self.heads = num_heads
+        self.to_qvk = nn.Linear(embed_dim, _dim * 3, bias=False)
+        self.W_0 = nn.Linear( _dim, embed_dim, bias=False)
+        self.scale_factor = self.dim_head ** -0.5
 
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
-
-        # Stack all weight matrices 1...h together for efficiency
-        # Note that in many implementations you see "bias=False" which is optional
-        self.qkv_proj = nn.Linear(input_dim, 3 * embed_dim)
-        self.o_proj = nn.Linear(embed_dim, embed_dim)
-
-        self._reset_parameters()
-
-    def _reset_parameters(self):
-        # Original Transformer initialization, see PyTorch documentation
-        nn.init.xavier_uniform_(self.qkv_proj.weight)
-        self.qkv_proj.bias.data.fill_(0)
-        nn.init.xavier_uniform_(self.o_proj.weight)
-        self.o_proj.bias.data.fill_(0)
 
     def forward(self, x, mask=None, return_attention=False):
-        batch_size, seq_length, *embed_dim = x.size()
-        qkv = self.qkv_proj(x)
+        assert x.dim() == 3
+        # Step 1
+        qkv = self.to_qvk(x)  # [batch, tokens, dim*3*heads ]
 
-        # Separate Q, K, V from linear output
-        qkv = qkv.reshape(batch_size, seq_length, self.num_heads, 3 * self.head_dim)
-        qkv = qkv.permute(0, 2, 1, 3)  # [Batch, Head, SeqLen, Dims]
-        q, k, v = qkv.chunk(3, dim=-1)
+        # Step 2
+        # decomposition to q,v,k and cast to tuple
+        # the resulted shape before casting to tuple will be:
+        # [3, batch, heads, tokens, dim_head]
+        q, k, v = tuple(rearrange(qkv, 'b t (d k h) -> k b h t d ', k=3, h=self.heads))
 
-        # Determine value outputs
-        values, attention = scaled_dot_product(q, k, v, mask=mask)
-        values = values.permute(0, 2, 1, 3)  # [Batch, SeqLen, Head, Dims]
-        values = values.reshape(batch_size, seq_length, embed_dim)
-        o = self.o_proj(values)
+        # Step 3
+        # resulted shape will be: [batch, heads, tokens, tokens]
+        scaled_dot_prod = torch.einsum('b h i d , b h j d -> b h i j', q, k) * self.scale_factor
 
-        if return_attention:
-            return o, attention
-        else:
-            return o
+        if mask is not None:
+            assert mask.shape == scaled_dot_prod.shape[2:]
+            scaled_dot_prod = scaled_dot_prod.masked_fill(mask, -np.inf)
 
+        attention = torch.softmax(scaled_dot_prod, dim=-1)
+
+        # Step 4. Calc result per batch and per head h
+        out = torch.einsum('b h i j , b h j d -> b h i d', attention, v)
+
+        # Step 5. Re-compose: merge heads with dim_head d
+        out = rearrange(out, "b h t d -> b t (h d)")
+
+        # Step 6. Apply final linear transformation layer
+        return self.W_0(out)
 
 class SlotAttention(nn.Module):
     def __init__(
@@ -110,17 +113,17 @@ class SlotAttention(nn.Module):
         keys = self.keys(x)  # [batch_size, input_size, slot_dim]
         values = self.values(x)  # [batch_size, input_size, slot_dim]
 
-        mu = self.slots_mu.expand(b, self.num_slots, -1).to(DEVICE)
-        sigma = self.slots_log_sigma.exp().expand(b, self.num_slots, -1).to(DEVICE)
+        mu = self.slots_mu.expand(b, self.num_slots, -1).to(device)
+        sigma = self.slots_log_sigma.exp().expand(b, self.num_slots, -1).to(device)
 
         if slot_initialization is not None:
             slots = slot_initialization
         else:
             slots = mu + sigma * torch.randn(
-                mu.shape, device=DEVICE
+                mu.shape, device=device
             )  # [batch_size, num_slots, slot_dim]
 
-        slots = slots.to(DEVICE)
+        slots = slots.to(device)
         for i in range(self.num_iterations):
             slots_prev = slots
             slots = self.slot_norm(slots)  # [batch_size, num_slots, slot_dim]
@@ -136,8 +139,8 @@ class SlotAttention(nn.Module):
             attn = F.softmax(attn_logits, dim=1)
 
             # Weighted Mean
-            attn += self.epsilon
-            attn /= torch.sum(attn, dim=-1, keepdim=True)
+            attn = attn + self.epsilon
+            attn = attn / torch.sum(attn, dim=-1, keepdim=True)
 
             updates = torch.einsum(
                 "bkd,bik->bid", values, attn
@@ -149,6 +152,6 @@ class SlotAttention(nn.Module):
             slots = self.gru(updates, slots_prev)
 
             slots = slots.reshape(b, -1, d)
-            slots += self.mlp(self.mlp_norm(slots))
+            slots = slots + self.mlp(self.mlp_norm(slots))
 
         return slots

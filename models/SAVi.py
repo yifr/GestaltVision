@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from .attention import MultiHeadAttention, SlotAttention
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class Predictor(nn.Module):
     def __init__(self, input_dim, num_heads, dim_feedforward, dropout=0.0):
@@ -18,7 +18,7 @@ class Predictor(nn.Module):
         super(Predictor, self).__init__()
 
         # Attention layer
-        self.self_attn = MultiHeadAttention(input_dim, input_dim, num_heads)
+        self.self_attn = MultiHeadAttention(input_dim, num_heads)
 
         # Two-layer MLP
         self.linear_net = nn.Sequential(
@@ -54,7 +54,7 @@ def build_grid(resolution):
     grid = np.reshape(grid, [resolution[0], resolution[1], -1])
     grid = np.expand_dims(grid, axis=0)
     grid = grid.astype(np.float32)
-    return torch.from_numpy(np.concatenate([grid, 1.0 - grid], axis=-1)).to(DEVICE)
+    return torch.from_numpy(np.concatenate([grid, 1.0 - grid], axis=-1)).to(device)
 
 
 class SoftPositionEmbedding(nn.Module):
@@ -72,7 +72,6 @@ class SoftPositionEmbedding(nn.Module):
 
     def forward(self, inputs):
         grid = self.embedding(self.grid)
-        print(self.grid.shape, grid.shape, inputs.shape)
         return inputs + grid
 
 
@@ -160,44 +159,66 @@ class Initializer(nn.Module):
     Provides slot initialization for segmentation mask conditioning signals
     """
 
-    def __init__(self, input_dim, hid_dim, resolution):
+    def __init__(self, input_dim, hid_dim, resolution, num_slots, slot_dim=64):
         super(Initializer, self).__init__()
-        print(input_dim, hid_dim)
+
+        self.num_slots = num_slots
+        self.slot_dim = slot_dim
+
         self.conv1 = nn.Conv2d(input_dim, hid_dim, kernel_size=5, stride=2)
         self.conv2 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=2)
         self.conv3 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=2)
         self.conv4 = nn.Conv2d(hid_dim, hid_dim, kernel_size=5, stride=1)
-        self.pos_embed = SoftPositionEmbedding(hid_dim, resolution)
+        self.pos_embed = SoftPositionEmbedding(hid_dim, (9,9))
         self.mlp1 = nn.Sequential(
-            nn.Conv2d(hid_dim, hid_dim * 2, kernel_size=1),
+            nn.Conv2d(hid_dim, slot_dim, kernel_size=1),
             nn.ReLU(),
-            nn.Conv2d(hid_dim * 2, hid_dim * 2, kernel_size=1),
+            nn.Conv2d(slot_dim, slot_dim, kernel_size=1),
         )
 
         self.mlp2 = nn.Sequential(
-            nn.Linear(hid_dim * 2, hid_dim * 4),
+            nn.Linear(slot_dim, slot_dim),
             nn.ReLU(),
-            nn.Linear(hid_dim * 4, hid_dim * 2),
+            nn.Linear(slot_dim, slot_dim),
         )
 
         self.layer_norm1 = nn.LayerNorm(hid_dim)
-        self.layer_norm2 = nn.LayerNorm(hid_dim * 2)
+        self.layer_norm2 = nn.LayerNorm(slot_dim)
 
     def forward(self, x):
-        print(x.shape)
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = self.conv3(x)
-        x = F.relu(x)
-        x = self.conv4(x)
-        print(x.shape)
-        x = self.pos_embed(x)
-        x = self.layer_norm1(x)
-        x = self.mlp1(x)
-        x = self.layer_norm2(x)
-        x = self.mlp2(x)
+        B, C, H, W = x.shape
+        objects = torch.unique(x)
+        slot_initializations = []
+
+        # independenly process each slot cue
+        for slot_idx in range(self.num_slots):
+            if slot_idx >= objects.shape[0] or objects[slot_idx] == 0:
+                sl_init = torch.zeros((B, self.slot_dim)).to(device)
+                slot_initializations.append(sl_init)
+            else:
+                obj = objects[slot_idx]
+                # Filter out other masks
+                x_obj = x.where(x == obj, torch.zeros_like(x))
+
+                # Pass them through encoding layer
+                x_obj = self.conv1(x_obj)
+                x_obj = F.relu(x_obj)
+                x_obj = self.conv2(x_obj)
+                x_obj = F.relu(x_obj)
+                x_obj = self.conv3(x_obj)
+                x_obj = F.relu(x_obj)
+                x_obj = self.conv4(x_obj)
+                x_obj = x_obj.permute(0, 2, 3, 1)   # B, H, W, C
+                x_obj = self.pos_embed(x_obj)
+                x_obj = self.layer_norm1(x_obj)
+                x_obj = x_obj.permute(0, 3, 1, 2)
+                x_obj = self.mlp1(x_obj)
+                x_obj = x_obj.mean(dim=(-1, -2))
+                x_obj = self.layer_norm2(x_obj)
+                x_obj = self.mlp2(x_obj)
+                slot_initializations.append(x_obj)
+
+        x = torch.stack(slot_initializations, dim=1)
         return x
 
 
@@ -249,15 +270,15 @@ class SlotAttentionVideo(nn.Module):
         resolution=(128, 128),
         num_slots=8,
         slot_dim=64,
-        slot_iterations=3,
-        initializer_dim=1
+        slot_iterations=1,
+        initializer_dim=3
     ):
         super(SlotAttentionVideo, self).__init__()
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.encoder = Encoder(hid_dim, resolution).to(self.device)
         self.decoder = Decoder(hid_dim, resolution).to(self.device)
-        self.initializer = Initializer(initializer_dim, hid_dim // 2, resolution).to(self.device)
+        self.initializer = Initializer(initializer_dim, hid_dim, resolution, num_slots).to(self.device)
         self.predictor = Predictor(hid_dim, 4, 256).to(self.device)
         self.corrector = SlotAttention(
             slot_iterations, num_slots, slot_dim, slot_dim * 2
@@ -272,6 +293,10 @@ class SlotAttentionVideo(nn.Module):
         # Encode frames
         B, T, C, H, W = images.shape
         preds = []
+        _recon_combined = []
+        _recons = []
+        _masks = []
+        _slots = []
         for t in range(T):
             image = images[:, t]
             x = self.encoder(image)
@@ -291,15 +316,18 @@ class SlotAttentionVideo(nn.Module):
             masks = nn.Softmax(dim=1)(masks)
             recon_combined = torch.sum(recons * masks, dim=1)  # Recombine image.
             recon_combined = recon_combined.permute(0, 3, 1, 2)
+
+            _recon_combined.append(recon_combined)
+            _masks.append(masks)
+            _recons.append(recons)
+            _slots.append(slots)
             # `recon_combined` has shape: [batch_size, width, height, num_channels].
 
-            preds.append(
-                {
-                    "recon_combined": recon_combined,
-                    "recons": recons,
-                    "masks": masks,
-                    "slots": slots,
-                }
-            )
+        preds = {
+                "recon_combined": torch.stack(_recon_combined, 1),
+                "recons": torch.stack(_recons, 1),
+                "masks": torch.stack(_masks, 1),
+                "slots": torch.stack(_slots, 1),
+            }
 
         return preds

@@ -122,12 +122,16 @@ class Gestalt(Dataset):
                 return
         else:
             scene = self.get_scenes(scene_idx)
-            root_dir = os.path.join(scene, image_pass)
-            paths = [os.path.join(root_dir, f"Image{idx:04d}.png") for idx in frame_idxs]
+            pass_dir = os.path.join(scene, image_pass)
+            paths = [os.path.join(pass_dir, f"Image{idx:04d}.png") for idx in frame_idxs]
             images = []
             for path in paths:
                 img = Image.open(path).convert(color_channels)
-                img = img.resize(self.resolution)
+                if image_pass == "masks":
+                    resample = Image.NEAREST
+                else:
+                    resample = Image.BICUBIC
+                img = img.resize(self.resolution, resample=resample)
                 img = np.array(img).astype(np.uint8)
                 if len(img.shape) < 3:
                     img = img[..., np.newaxis]  # add 1 channel for depths / masks
@@ -136,7 +140,7 @@ class Gestalt(Dataset):
 
             images = torch.stack(images, dim=0)
             if normalize:
-                images = images / 255
+                images = images / 255.0
             return images.to(self.device)
 
     def load_config_data(self, config_pass, scene, frame_idxs):
@@ -199,12 +203,8 @@ class Gestalt(Dataset):
         for image_pass in self.passes:
             res = []
             if image_pass in IMAGE_PASS_OPTS:
-                if image_pass == "masks" or image_pass == "depths":
-                    color_channels = "L"
-                    normalize = False
-                else:
-                    color_channels = "RGB"
-                    normalize = True
+                color_channels = "RGB"
+                normalize = True
 
                 res = self.load_image_data(image_pass, scene, frame_idxs, color_channels, normalize)
             elif image_pass in STATE_PASS_OPTS:
