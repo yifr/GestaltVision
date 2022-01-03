@@ -80,7 +80,10 @@ def eval(model, data_loader, args, step, writer=None, save=True):
         for i, batch in enumerate(data_loader):
             images = batch["images"]
             flows = batch["flows"]
-            cue = batch[args.cue][:, 0]
+            if args.cue == "masks":
+                cue = batch[args.cue][:, :, 0]  # Only take first time step of a cue
+            else:
+                cue = batch[args.cue][:, 0]
             out = model(images, cue=cue)
             pred_flows = out["recon_combined"]
             loss += F.mse_loss(flows, pred_flows).item()
@@ -125,11 +128,15 @@ def eval(model, data_loader, args, step, writer=None, save=True):
 
 
 def train(model, data_loader, args, step=0):
-    def train_step(data, metric, model, optim):
+    def train_step(batch, metric, model, optim):
         optim.zero_grad()
-        images = data["images"]
-        flows = data["flows"]
-        cue = data[args.cue][:, 0]  # Only take first time step of a cue
+        images = batch["images"]
+        flows = batch["flows"]
+        if args.cue == "masks":
+            cue = batch[args.cue][:, :, 0]  # Only take first time step of a cue
+        else:
+            cue = batch[args.cue][:, 0]
+
         out = model(images, cue=cue)
         loss = metric(out["recon_combined"], flows)
         loss.backward()

@@ -11,7 +11,6 @@ from glob import glob
 IMAGE_PASS_OPTS = ["images", "masks", "depths", "flows", "normals"]
 STATE_PASS_OPTS = ["location", "center_of_mass", "shape_params", "bounding_box"]
 
-
 class Gestalt(Dataset):
     """
     Data Loader for gestalt data
@@ -38,23 +37,21 @@ class Gestalt(Dataset):
         random_seed: int: random seed for train/test split
         color_channels: str: "RGB" or "L" for black and white
     """
-
-    def __init__(
-        self,
-        root_dir="/om/user/yyf/CommonFate/scenes/",
-        top_level=["voronoi", "noise"],
-        sub_level=["1", "2", "3"],
-        passes=["images", "masks", "flows"],
-        max_num_objects=5,
-        frames_per_scene=10,
-        frame_sampling_method="consecutive",
-        resolution=(128, 128),
-        transforms={},
-        training=True,
-        train_test_split=0.2,
-        random_seed=42,
-        color_channels="RGB",
-    ):
+    def __init__(self,
+                 root_dir="/om/user/yyf/CommonFate/scenes/",
+                 top_level=["voronoi", "noise"],
+                 sub_level=["1", "2", "3"],
+                 passes=["images", "masks", "flows"],
+                 max_num_objects=5,
+                 frames_per_scene=10,
+                 frame_sampling_method="consecutive",
+                 resolution=(128,128),
+                 transforms={},
+                 training=True,
+                 train_test_split=.2,
+                 random_seed=42,
+                 color_channels="RGB"
+                ):
 
         self.root_dir = root_dir
         if self.root_dir.endswith(".hdf5"):
@@ -77,9 +74,7 @@ class Gestalt(Dataset):
         self.color_channels = color_channels
 
         self.train_scenes, self.test_scenes = self.get_scene_paths()
-        self.real_frames_per_scene = len(
-            glob(os.path.join(self.train_scenes[0], "images", "*.png"))
-        )
+        self.real_frames_per_scene = len(glob(os.path.join(self.train_scenes[0], "images", "*.png")))
         if self.frame_sampling_method == "consecutive":
             self.scene_splits = int(self.real_frames_per_scene / self.frames_per_scene)
         else:
@@ -98,9 +93,7 @@ class Gestalt(Dataset):
                 num_test = int(len(files) * self.train_test_split)
 
                 np.random.seed(self.random_seed)
-                test_idxs = sorted(
-                    np.random.choice(range(len(files)), num_test, replace=False)
-                )
+                test_idxs = sorted(np.random.choice(range(len(files)), num_test, replace=False))
                 test_idx = 0
                 for i, f in enumerate(files):
                     fpath = os.path.join(data_dir, f)
@@ -123,9 +116,7 @@ class Gestalt(Dataset):
         else:
             return scenes
 
-    def load_image_data(
-        self, image_pass, scene_idx, frame_idxs, color_channels="RGB", normalize=True
-    ):
+    def load_image_data(self, image_pass, scene_idx, frame_idxs, color_channels="RGB", normalize=True):
         if self.use_h5:
             # TODO
             with open(self.root_dir, "r") as f:
@@ -135,9 +126,7 @@ class Gestalt(Dataset):
         else:
             scene = self.get_scenes(scene_idx)
             pass_dir = os.path.join(scene, image_pass)
-            paths = [
-                os.path.join(pass_dir, f"Image{idx:04d}.png") for idx in frame_idxs
-            ]
+            paths = [os.path.join(pass_dir, f"Image{idx:04d}.png") for idx in frame_idxs]
             images = []
             for path in paths:
                 img = Image.open(path).convert(color_channels)
@@ -174,7 +163,7 @@ class Gestalt(Dataset):
                 images = images / 255.0
 
             if image_pass == "masks":
-                images = images.permute(1, 0, 2, 3, 4)  # N_OBJECTS x T x C x H x W
+                images = images.permute(1, 0, 2, 3, 4) # N_OBJECTS x T x C x H x W
 
             return images.to(self.device)
 
@@ -187,7 +176,7 @@ class Gestalt(Dataset):
         data = []
         for obj in config_data:
             obj_params = config_data[obj]
-            if obj_params.get("child_params"):  # ignore parent shapes
+            if obj_params.get("child_params"): # ignore parent shapes
                 continue
 
             if config_pass == "shape_params":
@@ -205,6 +194,8 @@ class Gestalt(Dataset):
         data = torch.from_numpy(np.array(data))
         return data
 
+
+
     def __len__(self):
         scenes = self.get_scenes()
         length = len(scenes) * self.frames_per_scene * self.scene_splits
@@ -215,16 +206,12 @@ class Gestalt(Dataset):
         if self.frame_sampling_method == "consecutive":
             scene_block = idx % self.scene_splits
             start_frame = self.frames_per_scene * scene_block
-            frame_idxs = np.arange(
-                start_frame + 1, start_frame + self.frames_per_scene + 1
-            )
+            frame_idxs = np.arange(start_frame + 1, start_frame + self.frames_per_scene + 1)
         elif self.frame_sampling_method == "even":
             interval = int(self.real_frames_per_scene / self.frames_per_scene)
             if interval * self.frames_per_scene > self.real_frames_per_scene:
-                print(
-                    f"Cannot use even sampling method for {self.frames_per_scene} frames in a scene \
-                        with {self.real_frames_per_scene} total frames"
-                )
+                print(f"Cannot use even sampling method for {self.frames_per_scene} frames in a scene \
+                        with {self.real_frames_per_scene} total frames")
                 raise ValueError
             frame_idxs = np.arange(1, self.real_frames_per_scene + 1, interval)
         else:
@@ -244,9 +231,7 @@ class Gestalt(Dataset):
                 color_channels = "RGB"
                 normalize = True
 
-                res = self.load_image_data(
-                    image_pass, scene, frame_idxs, color_channels, normalize
-                )
+                res = self.load_image_data(image_pass, scene, frame_idxs, color_channels, normalize)
             elif image_pass in STATE_PASS_OPTS:
                 res = self.load_config_data(image_pass, scene, frame_idxs)
             else:
@@ -257,35 +242,13 @@ class Gestalt(Dataset):
 
         return data
 
-
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
-
-    data = DataLoader(
-        Gestalt(passes=["images", "flows", "depths", "masks"]),
-        batch_size=4,
-        shuffle=True,
-    )
+    data = DataLoader(Gestalt(passes=["images", "flows", "depths", "masks"]), batch_size=4, shuffle=True)
     batch = next(iter(data))
     print(batch.keys())
-    print(
-        f"images: %s, masks: %s, flows: %s, depths: %s"
-        % (
-            batch["images"].shape,
-            batch["masks"].shape,
-            batch["flows"].shape,
-            batch["depths"].shape,
-        )
-    )
-    print(
-        f"image mean: %f, mask mean: %f, flow mean: %f, depth mean: %f"
-        % (
-            batch["images"].mean(),
-            batch["masks"].mean(),
-            batch["flows"].mean(),
-            batch["depths"].mean(),
-        )
-    )
+    print(f"images: %s, masks: %s, flows: %s, depths: %s" % (batch["images"].shape, batch["masks"].shape, batch["flows"].shape, batch["depths"].shape))
+    print(f"image mean: %f, mask mean: %f, flow mean: %f, depth mean: %f" % (batch["images"].mean(), batch["masks"].mean(), batch["flows"].mean(), batch["depths"].mean()))
     print("len dataset: ", len(data))
     data.dataset.training = False
     print("len test: ", len(data))
