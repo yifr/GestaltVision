@@ -5,14 +5,7 @@ import torch.nn.functional as F
 
 
 class UNet(nn.Module):
-    def __init__(
-        self,
-        n_channels,
-        n_classes,
-        width_multiplier=1,
-        trilinear=True,
-        use_ds_conv=False,
-    ):
+    def __init__(self, n_channels, n_classes, width_multiplier=1, trilinear=True, use_ds_conv=False):
         """A simple 3D Unet, adapted from a 2D Unet from https://github.com/milesial/Pytorch-UNet/tree/master/unet
         Arguments:
           n_channels = number of input channels; 3 for RGB, 1 for grayscale input
@@ -30,16 +23,14 @@ class UNet(nn.Module):
         print("Setting model to ", self.device)
         self.n_channels = n_channels
         self.n_classes = n_classes
-        self.channels = [int(c * width_multiplier) for c in _channels]
+        self.channels = [int(c*width_multiplier) for c in _channels]
         self.trilinear = trilinear
         self.convtype = DepthwiseSeparableConv3d if use_ds_conv else nn.Conv3d
 
         self.inc = DoubleConv(n_channels, self.channels[0], conv_type=self.convtype)
         self.down1 = Down(self.channels[0], self.channels[1], conv_type=self.convtype)
         factor = 2 if trilinear else 1
-        self.down2 = Down(
-            self.channels[1], self.channels[2] // factor, conv_type=self.convtype
-        )
+        self.down2 = Down(self.channels[1], self.channels[2] // factor, conv_type=self.convtype)
         # self.down3 = Down(self.channels[2], self.channels[3] // factor, conv_type=self.convtype)
 
         # self.down4 = Down(self.channels[3], self.channels[4] // factor, conv_type=self.convtype)
@@ -93,13 +84,10 @@ class UNet(nn.Module):
 
         return
 
-
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
 
-    def __init__(
-        self, in_channels, out_channels, conv_type=nn.Conv3d, mid_channels=None
-    ):
+    def __init__(self, in_channels, out_channels, conv_type=nn.Conv3d, mid_channels=None):
         super().__init__()
         if not mid_channels:
             mid_channels = out_channels
@@ -109,7 +97,7 @@ class DoubleConv(nn.Module):
             nn.ReLU(inplace=True),
             conv_type(mid_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=True)
         )
 
     def forward(self, x):
@@ -122,7 +110,8 @@ class Down(nn.Module):
     def __init__(self, in_channels, out_channels, conv_type=nn.Conv3d):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
-            nn.MaxPool3d(2), DoubleConv(in_channels, out_channels, conv_type=conv_type)
+            nn.MaxPool3d(2),
+            DoubleConv(in_channels, out_channels, conv_type=conv_type)
         )
 
     def forward(self, x):
@@ -137,15 +126,12 @@ class Up(nn.Module):
 
         # if trilinear, use the normal convolutions to reduce the number of channels
         if trilinear:
-            self.up = nn.Upsample(scale_factor=2, mode="trilinear", align_corners=True)
-            self.conv = DoubleConv(
-                in_channels, out_channels, mid_channels=in_channels // 2
-            )
+            self.up = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
+            self.conv = DoubleConv(in_channels, out_channels, mid_channels=in_channels // 2)
         else:
-            self.up = nn.ConvTranspose3d(
-                in_channels, in_channels // 2, kernel_size=2, stride=2
-            )
+            self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             self.conv = DoubleConv(in_channels, out_channels)
+
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
@@ -153,7 +139,8 @@ class Up(nn.Module):
         diffY = x2.size()[2] - x1.size()[2]
         diffX = x2.size()[3] - x1.size()[3]
 
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
         # if you have padding issues, see
         # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
         # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
@@ -173,13 +160,7 @@ class OutConv(nn.Module):
 class DepthwiseSeparableConv3d(nn.Module):
     def __init__(self, nin, nout, kernel_size, padding, kernels_per_layer=1):
         super(DepthwiseSeparableConv3d, self).__init__()
-        self.depthwise = nn.Conv3d(
-            nin,
-            nin * kernels_per_layer,
-            kernel_size=kernel_size,
-            padding=padding,
-            groups=nin,
-        )
+        self.depthwise = nn.Conv3d(nin, nin * kernels_per_layer, kernel_size=kernel_size, padding=padding, groups=nin)
         self.pointwise = nn.Conv3d(nin * kernels_per_layer, nout, kernel_size=1)
 
     def forward(self, x):
@@ -188,8 +169,8 @@ class DepthwiseSeparableConv3d(nn.Module):
         return out
 
 
-if __name__ == "__main__":
-    from data.CommonFate import CommonFate
+if __name__=="__main__":
+    from dorsalventral.data.CommonFate import CommonFate
     from torch.utils.data import DataLoader
     import torchvision.transforms as T
 
@@ -205,7 +186,7 @@ if __name__ == "__main__":
     print("images: ", batch["images"].shape, "masks: ", batch["masks"].shape)
     metrics = model.get_metrics(batch["images"], batch["masks"], criterion)
 
-    print("loss:", metrics["loss"].item())
+    print("loss:" , metrics["loss"].item())
     print("predicted masks:", metrics["predicted_masks"].shape)
     print("gt_masks: ", metrics["gt_masks"].shape)
     print("mean pred:", metrics["predicted_masks"].sum())

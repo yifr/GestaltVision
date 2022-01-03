@@ -56,7 +56,7 @@ def adjusted_rand_index(true_mask, pred_mask, foreground=True):
 
 def mean_IOU(true_mask, pred_mask):
     """
-    Implements Mean Intersection over Union (IOU) metric. 
+    Implements Mean Intersection over Union (IOU) metric.
     Args:
         true_mask: tensor: B x T x C x H x W
         pred_mask: tensor: B x T x C x H x W
@@ -68,7 +68,17 @@ def mean_IOU(true_mask, pred_mask):
     pred_masks = pred_mask.reshape(B, -1)
 
     intersection = (true_masks == pred_masks).sum(dim=1)
-    union = (true_masks + pred_masks).sum(dim=1)
+    union = torch.logical_or(true_masks, pred_masks).sum(dim=1)
     iou = intersection / union
     return iou.mean()
 
+if __name__=="__main__":
+    B, T, C, H, W = 1, 10, 3, 128, 128
+    t1 = torch.rand((B, T, C, H, W))
+    t2 = torch.rand((B, T, C, H, W))
+    t1_b = t1.clone()
+    t1_b[0][:5] += 10
+    miou_diff = (mean_IOU(t1, t2))
+    miou_half = mean_IOU(t1, t1_b)
+    miou_same = (mean_IOU(t1, t1))
+    print("diff", miou_diff, "same", miou_same, "partial", miou_half)

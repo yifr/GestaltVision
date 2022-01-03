@@ -25,8 +25,8 @@ parser.add_argument(
 parser.add_argument("--cue", type=str, default="masks", help="Object Cue for SAVi")
 
 # Data params
-parser.add_argument("--num_frames", type=int, default=10, help="Frames to train on")
-parser.add_argument("--batch_size", type=int, default=10, help="Batch Size")
+parser.add_argument("--num_frames", type=int, default=6, help="Frames to train on")
+parser.add_argument("--batch_size", type=int, default=32, help="Batch Size")
 
 # Training params
 parser.add_argument("--lr", type=float, default=1e-2, help="Learning Rate")
@@ -68,6 +68,7 @@ def eval(model, data_loader, args, step, writer=None, save=True):
         args: args
         step: step to log
     """
+    print("Running Evaluation")
     model.eval()
     data_loader.dataset.training = False
 
@@ -77,7 +78,7 @@ def eval(model, data_loader, args, step, writer=None, save=True):
         fg_ari = 0
         mean_IOU = 0
 
-        for i, batch in enumerate(data_loader):
+        for i, batch in tqdm(enumerate(data_loader)):
             images = batch["images"]
             flows = batch["flows"]
             if args.cue == "masks":
