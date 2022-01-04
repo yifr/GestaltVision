@@ -70,10 +70,10 @@ def eval(model, data_loader, args, step, writer=None, save=True):
         args: args
         step: step to log
     """
-    print("Running Evaluation")
     model.eval()
     data_loader.dataset.training = False
 
+    print(f"Running Evaluation on {len(data_loader)} samples")
     with torch.no_grad():
         np.random.seed(args.seed)
         loss = 0
