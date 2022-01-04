@@ -1,5 +1,6 @@
 import os
 import glob
+import time
 import torch
 import metrics
 import numpy as np
@@ -38,6 +39,7 @@ parser.add_argument("--log_every", type=int, default=50, help="How often to log 
 parser.add_argument(
     "--eval_every", type=int, default=1000, help="How often to run eval"
 )
+parser.add_argument("--seed", type=int, default=42, help="random seed")
 
 # Paths
 parser.add_argument(
@@ -85,23 +87,30 @@ def eval(model, data_loader, args, step, writer=None, save=True):
                 cue = batch[args.cue][:, :, 0]  # Only take first time step of a cue
             else:
                 cue = batch[args.cue][:, 0]
-            out = model(images, cue=cue)
+            out = model(images, cues=cue)
             pred_flows = out["recon_combined"]
             loss += F.mse_loss(flows, pred_flows).item()
 
-            pred_masks = out["masks"].detach().cpu().numpy()
-            gt_masks = batch["masks"].detach().cpu().numpy()
-            pred_groups = pred_masks.reshape(
-                args.batch_size, args.num_slots, -1
-            ).permute(0, 2, 1)
-            true_groups = gt_masks.reshape(args.batch_size, args.num_slots, -1).permute(
-                0, 2, 1
-            )
-            fg_ari += metrics.adjusted_rand_index(true_groups, pred_groups)
+            pred_masks = out["masks"].detach()
+            gt_masks = batch["masks"].detach().sum(dim=3, keepdim=True)  # Combine RGB channels into one
+            B, N, T, C, H, W = gt_masks.shape
+            gt_masks = gt_masks.reshape((B, N, T, H, W, C))
+            pred_masks = pred_masks.transpose(1, 2)
 
-            gt_masks = batch["masks"].sum(dim=1)  # Combine individual mask slots
-            pred_masks = out["masks"].sum(dim=1)
+            pred_groups = pred_masks.reshape(
+                args.batch_size, N, -1
+            ).permute(0, 2, 1)
+            true_groups = gt_masks.reshape(
+                args.batch_size, N, -1
+            ).permute(0, 2, 1)
+            fg_ari += metrics.adjusted_rand_index(true_groups, pred_groups).mean()
+
+            gt_masks = gt_masks[:, 1:, ...].sum(dim=1)  # Combine individual mask slots and ignore backgrounds
+            pred_masks = pred_masks.sum(dim=1)
             mean_IOU += metrics.mean_IOU(gt_masks, pred_masks)
+
+            gt_masks = gt_masks.reshape(B, T, C, H, W)
+            pred_masks = pred_masks.reshape(B, T, C, H, W)
 
         mean_IOU /= len(data_loader)
         fg_ari /= len(data_loader)
@@ -134,11 +143,12 @@ def train(model, data_loader, args, step=0):
         images = batch["images"]
         flows = batch["flows"]
         if args.cue == "masks":
-            cue = batch[args.cue][:, :, 0]  # Only take first time step of a cue
+            # shape is B x max_num_objects x T x C x H x W
+            cue = batch[args.cue][:, :, 0, ...]  # Only take first time step of a cue
         else:
             cue = batch[args.cue][:, 0]
 
-        out = model(images, cue=cue)
+        out = model(images, cues=cue)
         loss = metric(out["recon_combined"], flows)
         loss.backward()
         # Clip gradients
@@ -150,27 +160,36 @@ def train(model, data_loader, args, step=0):
     metric = F.mse_loss
     writer = SummaryWriter(args.log_dir)
 
-    for epoch in range(1, args.epochs + 1):
+    while True:
+        start = time.time()
         for i, batch in enumerate(tqdm(data_loader)):
+            batch_load = time.time()
             out, loss = train_step(batch, metric, model, optim)
             if i % args.log_every == 0:
+                print(f"Time taken to load data: {batch_load - start}")
                 # Reshape masks for foreground ari metric
-                pred_masks = out["masks"].detach().cpu().numpy()
-                gt_masks = batch["masks"].detach().cpu().numpy()
+                pred_masks = out["masks"].detach()
+                gt_masks = batch["masks"].detach().sum(dim=3, keepdim=True)  # Combine RGB channels into one
+                B, N, T, C, H, W = gt_masks.shape
+                gt_masks = gt_masks.reshape((B, N, T, H, W, C))
+                pred_masks = pred_masks.transpose(1, 2)
+
                 pred_groups = pred_masks.reshape(
-                    args.batch_size, args.num_slots, -1
+                    args.batch_size, N, -1
                 ).permute(0, 2, 1)
                 true_groups = gt_masks.reshape(
-                    args.batch_size, args.num_slots, -1
+                    args.batch_size, N, -1
                 ).permute(0, 2, 1)
                 fg_ari = metrics.adjusted_rand_index(true_groups, pred_groups)
 
-                gt_masks = batch["masks"].sum(dim=1)  # Combine individual mask slots
-                pred_masks = out["masks"].sum(dim=1)
+                gt_masks = gt_masks[:, 1:, ...].sum(dim=1)  # Combine individual mask slots and ignore backgrounds
+                pred_masks = pred_masks.sum(dim=1)
                 mean_IOU = metrics.mean_IOU(gt_masks, pred_masks)
 
+                gt_masks = gt_masks.reshape(B, T, C, H, W)
+                pred_masks = pred_masks.reshape(B, T, C, H, W)
                 writer.add_scalar("train/loss", loss, step)
-                writer.add_scalar("train/fg-ARI", fg_ari, step)
+                writer.add_scalar("train/fg-ARI", fg_ari.mean(), step)
                 writer.add_scalar("train/mean_IOU", mean_IOU, step)
 
                 writer.add_video(
@@ -182,7 +201,7 @@ def train(model, data_loader, args, step=0):
                     step,
                 )
                 writer.add_video(
-                    "train/input_video", out["images"][: args.plot_n_videos], step
+                    "train/input_video", batch["images"][: args.plot_n_videos], step
                 )
                 writer.add_video("train/gt_masks", gt_masks[: args.plot_n_videos], step)
                 writer.add_video(
@@ -190,7 +209,7 @@ def train(model, data_loader, args, step=0):
                 )
 
                 print("Step: {}, Loss: {}".format(step, loss))
-                print("\tFG-ARI: {}, Mean IOU: {}".format(fg_ari, mean_IOU))
+                print("\tFG-ARI: {}, Mean IOU: {}".format(fg_ari.mean(), mean_IOU))
 
             if step % args.eval_every == 0:
                 eval(model, data_loader, args, step, writer)
@@ -202,7 +221,16 @@ def train(model, data_loader, args, step=0):
                 )
 
             step += 1
+            if step > args.train_iters:
+                print("Reached maximum training number of training steps...")
+                eval(model, data_loader, args, step, writer)
 
+                checkpoint = {"model": model.state_dict(), "optim": optim, "step": step}
+                torch.save(
+                    checkpoint,
+                    os.path.join(args.checkpoint_dir, "FINAL.pth".format(step)),
+                )
+                return
 
 def load_latest(args):
     checkpoint_path = os.path.join(args.save_dir, "checkpoint_*.pth")
@@ -227,7 +255,6 @@ if __name__ == "__main__":
     ).float()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dataloader.to(device)
     model.to(device)
 
     step = 0

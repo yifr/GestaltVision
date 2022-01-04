@@ -35,7 +35,6 @@ def adjusted_rand_index(true_mask, pred_mask, foreground=True):
     pred_mask_oh = F.one_hot(pred_group_ids, n_pred_groups).to(torch.float32)
 
     n_points = torch.sum(true_mask_oh, dim=[1, 2]).to(torch.float32)
-
     nij = torch.einsum("bji,bjk->bki", pred_mask_oh, true_mask_oh)
     a = torch.sum(nij, dim=1)
     b = torch.sum(nij, dim=2)

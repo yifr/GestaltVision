@@ -194,7 +194,7 @@ class Initializer(nn.Module):
                 sl_init = torch.zeros((B, self.slot_dim)).to(device)
                 slot_initializations.append(sl_init)
             else:
-                x_obj = x[slot_idx]
+                x_obj = x[:, slot_idx]
                 # x_obj = x.where(x == obj, torch.zeros_like(x))
 
                 # Pass them through encoding layer

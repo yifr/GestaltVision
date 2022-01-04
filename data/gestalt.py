@@ -203,7 +203,7 @@ class Gestalt(Dataset):
                 data.append(config_data)
 
         data = torch.from_numpy(np.array(data))
-        return data
+        return data.to(self.device)
 
     def __len__(self):
         scenes = self.get_scenes()

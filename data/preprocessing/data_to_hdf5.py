@@ -1,5 +1,6 @@
 import os
 import sys
+from glob import glob
 from PIL import Image
 import numpy as np
 import h5py as hp
@@ -7,11 +8,17 @@ import argparse
 import tqdm
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--current_dir", type=str, help="current dataset location")
+parser.add_argument("--top_level", type=str, help="top level directory (for hierarchical dataset)")
+parser.add_argument("--second_level", type=str, help="top level directory (for hierarchical dataset)")
 parser.add_argument("--root_dir", type=str, help="Root dataset directory")
 parser.add_argument("--dataset_name", type=str, help="Name of the output hdf5 file")
 
 args = parser.parse_args()
 
+def gestalt_to_hdf5():
+
+    dataset_root = os.path.join(args.root_dir, args.dataset_name + ".hdf5")
 
 def clevr_to_hdf5():
     dataset_root = os.path.join(args.root_dir, "CLEVR_v1.0", "images")
