@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name gestalt_vision
+#SBATCH --job-name SAVI
 #SBATCH --mail-type=END          # Mail events (NONE, BEGIN, END, FAIL, ALL
 #SBATCH --mail-user=yyf@mit.edu   # Where to send mail)
-#SBATCH -t 10:30:00
+#SBATCH -t 12:30:00
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
-#SBATCH --constraint=high-capacity
+#SBATCH --constraint=48GB
 #SBATCH -p tenenbaum
 #SBATCH --mem=24G
 
-python run.py --config configs/vqvae.json
+python train_savi.py

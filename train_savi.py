@@ -245,7 +245,7 @@ def load_latest(args):
 
 if __name__ == "__main__":
     dataloader = DataLoader(
-        gestalt.Gestalt(root_dir=args.data_dir, frames_per_scene=args.num_frames),
+        gestalt.Gestalt(root_dir=args.data_dir, frames_per_scene=args.num_frames, train_test_split=0.9),
         batch_size=args.batch_size,
         shuffle=True,
     )
