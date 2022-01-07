@@ -54,13 +54,11 @@ class Gestalt(Dataset):
         train_test_split=0.2,
         random_seed=42,
         color_channels="RGB",
+        use_h5=True
     ):
 
         self.root_dir = root_dir
-        if self.root_dir.endswith(".hdf5"):
-            self.use_h5 = True
-        else:
-            self.use_h5 = False
+        self.use_h5 = use_h5
 
         self.top_level = top_level
         self.sub_level = sub_level
@@ -88,27 +86,42 @@ class Gestalt(Dataset):
     def get_scene_paths(self):
         train_scenes = []
         test_scenes = []
+
+        # split scenes into train and test
+        num_test = int(len(files) * self.train_test_split)
+
+        np.random.seed(self.random_seed)
+        test_idxs = sorted(
+            np.random.choice(range(len(files)), num_test, replace=False)
+        )
+
         for top in self.top_level:
             for sub in self.sub_level:
                 data_path_pattern = os.path.join(self.root_dir, top, "*" + sub)
                 data_dir = glob(data_path_pattern)[0]
-                files = os.listdir(data_dir)
-                files = sorted(files)
-                # split scenes into train and test
-                num_test = int(len(files) * self.train_test_split)
+                if self.use_h5:
+                    with h5py.File(data_dir, "r", libver="latest", swmr=True) as f:
+                        files = list(f.keys())
+                        files = sorted(files)
+                        test_idx = 0
+                        for i, f in enumerate(files):
+                            if test_idx >= len(test_idxs) or i != test_idxs[test_idx]:
+                                train_scenes.append((data_dir, f))
+                            else:
+                                test_scenes.append((data_dir, f))
+                                test_idx += 1
 
-                np.random.seed(self.random_seed)
-                test_idxs = sorted(
-                    np.random.choice(range(len(files)), num_test, replace=False)
-                )
-                test_idx = 0
-                for i, f in enumerate(files):
-                    fpath = os.path.join(data_dir, f)
-                    if test_idx >= len(test_idxs) or i != test_idxs[test_idx]:
-                        train_scenes.append(fpath)
-                    else:
-                        test_scenes.append(fpath)
-                        test_idx += 1
+                else:
+                    files = os.listdir(data_dir)
+                    files = sorted(files)
+                    test_idx = 0
+                    for i, f in enumerate(files):
+                        fpath = os.path.join(data_dir, f)
+                        if test_idx >= len(test_idxs) or i != test_idxs[test_idx]:
+                            train_scenes.append(fpath)
+                        else:
+                            test_scenes.append(fpath)
+                            test_idx += 1
 
         return train_scenes, test_scenes
 
@@ -128,8 +141,7 @@ class Gestalt(Dataset):
     ):
         if self.use_h5:
             # TODO
-            with open(self.root_dir, "r") as f:
-                data = h5.File(f, mode="r")
+            with h5py.File(self.root_dir, "r") as f:
                 data.close()
                 return
         else:
@@ -207,7 +219,7 @@ class Gestalt(Dataset):
 
     def __len__(self):
         scenes = self.get_scenes()
-        length = len(scenes) * self.frames_per_scene * self.scene_splits
+        length = len(scenes) * self.scene_splits
         return length
 
     def get_info(self, idx):

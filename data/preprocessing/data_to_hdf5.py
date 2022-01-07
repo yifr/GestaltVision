@@ -23,40 +23,71 @@ def gestalt_to_hdf5():
             os.makedirs(root_dir)
 
     new_dataset_path = os.path.join(root_dir, args.sub_level + ".hdf5")
-    print("Creating new dataset: ", new_dataset_path)
-    with hp.File(new_dataset_path, "w") as h5_data:
-        data_path_pattern = os.path.join(args.data_dir, args.top_level, "*" + args.sub_level)
-        data_dir = glob(data_path_pattern)[0]
-        files = os.listdir(data_dir)
-        files = sorted(files)
-        print(f"Loading {len(files)} files from {args.top_level}/{args.sub_level}")
+    if os.path.exists(new_dataset_path):
+        mode = "a"
+        print("Adding additional data to existing file", new_dataset_path)
+    else:
+        mode = "w"
+        print("Creating new dataset: ", new_dataset_path)
 
-        for i, f in tqdm(enumerate(files)):
-            scene_group = h5_data.create_group(f"scene_{i:03d}")
-            for image_pass in args.image_passes:
-                print(f"Loading {image_pass}...")
-                fpath = os.path.join(data_dir, f, image_pass)
-                pass_group = scene_group.create_group(image_pass)
-                image_names = os.listdir(fpath)
-                n_images = len(image_names)
-                images = []
-                for image_name in image_names:
-                    img_path = os.path.join(fpath, image_name)
-                    img = Image.open(img_path).convert("RGB")
-                    if image_pass == "masks":
-                        resample = Image.NEAREST
-                    else:
-                        resample = Image.BICUBIC
-                    img = img.resize((args.resize, args.resize), resample=resample)
-                    img = np.array(img).astype(np.uint8)
-                    images.append(img)
+    logfile_path = os.path.join(args.data_dir, args.top_level, args.sub_level + "_log.txt")
+    with open(logfile_path, "w") as logfile:
+        with hp.File(new_dataset_path, mode) as h5_data:
+            data_path_pattern = os.path.join(args.data_dir, args.top_level, "*" + args.sub_level)
+            data_dir = glob(data_path_pattern)[0]
+            files = os.listdir(data_dir)
+            files = sorted(files)
+            print(f"Loading {len(files)} files from {args.top_level}/{args.sub_level}")
 
-                images = np.concatenate(images, axis=0)
-                if i == 0:
+            for i, f in tqdm(enumerate(files)):
+                scene = f"scene_{i:03d}"
+                log_text = scene + "\n\t"
+                if h5_data.get(scene):
+                    scene_group = h5_data[scene]
+                else:
+                    scene_group = h5_data.create_group(f"scene_{i:03d}")
+                print(f)
+                for image_pass in args.image_passes:
+                    print(f"Loading {image_pass}...")
+                    fpath = os.path.join(data_dir, f, image_pass)
+                    if not os.path.exists(fpath):
+                        print("No images found at", fpath)
+                        continue
+
+                    if len(os.listdir(fpath)) == 0:
+                        print("No images found at", fpath)
+                        continue
+
+                    if scene_group.get(image_pass):
+                        print("Data already exists for image pass", image_pass)
+                        log_text += image_pass + "\t"
+                        continue
+
+                    pass_group = scene_group.create_group(image_pass)
+                    image_names = os.listdir(fpath)
+                    n_images = len(image_names)
+                    images = []
+                    for image_name in image_names:
+                        img_path = os.path.join(fpath, image_name)
+                        img = Image.open(img_path).convert("RGB")
+                        if image_pass == "masks":
+                            resample = Image.NEAREST
+                        else:
+                            resample = Image.BICUBIC
+                        img = img.resize((args.resize, args.resize), resample=resample)
+                        img = np.array(img).astype(np.uint8)
+                        images.append(img)
+
+                    images = np.concatenate(images, axis=0)
                     print(f"Pass: {image_pass}, Shape: {images.shape}")
 
-                pass_data = pass_group.create_dataset(image_pass, images.shape)
-                pass_data[...] = images
+                    pass_data = pass_group.create_dataset(image_pass, images.shape)
+                    pass_data[...] = images
+                    log_text += image_pass + "\t"
+
+                logfile.write(log_text + "\n")
+
+            logfile.write("\nDONE\n")
 
 
 def clevr_to_hdf5():
