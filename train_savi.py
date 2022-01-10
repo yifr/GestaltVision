@@ -30,8 +30,9 @@ parser.add_argument("--num_frames", type=int, default=6, help="Frames to train o
 parser.add_argument("--batch_size", type=int, default=32, help="Batch Size")
 
 # Training params
-parser.add_argument("--lr", type=float, default=1e-2, help="Learning Rate")
-parser.add_argument("--grad_clip", type=float, default=0.5, help="Gradient Clipping")
+parser.add_argument("--lr", type=float, default=1e-4, help="Learning Rate")
+parser.add_argument("--warmup_steps" type=int, default=2500, help="Warmup steps for learning rate")
+parser.add_argument("--grad_clip", type=float, default=0.05, help="Gradient Clipping")
 parser.add_argument(
     "--train_iters", type=int, default=10e4, help="Number of training steps"
 )
@@ -49,9 +50,24 @@ parser.add_argument(
     "--log_dir", type=str, default="/om2/user/yyf/GestaltVision/runs/SAVi"
 )
 parser.add_argument(
-    "--save_dir", type=str, default="/om2/user/yyf/GestaltVision/models/SAVi"
+    "--checkpoint_dir", type=str, default="/om2/user/yyf/GestaltVision/models/SAVi"
 )
 parser.add_argument("--data_dir", type=str, default="/om/user/yyf/CommonFate/scenes")
+parser.add_argument(
+    "--top_level",
+    type=str,
+    nargs="+",
+    default=["voronoi", "noise"],
+    help="texture split",
+)
+parser.add_argument(
+    "--sub_level",
+    type=str,
+    nargs="+",
+    default=["superquadric_1", "superquadric_2", "superquadric_3"],
+    help="object split",
+)
+
 parser.add_argument(
     "--load_latest_model",
     action="store_true",
@@ -59,6 +75,53 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
+class LRScheduler:
+    def __init__(self, max_lr, max_steps, warmup_steps):
+        self.max_lr = lr
+        self.max_steps = max_steps
+        self.warmup_steps = warmup_steps
+
+    def update(optim, step):
+        if step < self.warmup_steps:
+            warmup_percent_done = step / self.warmup_steps
+            lr = self.max_lr * warmup_percent_done
+            optim.lr = lr
+        else:
+            lr = 0.5 * (self.max_lr)(1 + np.cos(step / self.max_steps * np.pi))
+            optim.lr = lr
+
+        return lr
+
+
+def learning_rate_update(optim, step, warmup_steps, max_lr, max_steps):
+    """ Learning Rate Scheduler with linear warmup and cosine annealing
+
+        Params:
+        ------
+        optim: torch.optim:
+            Torch optimizer
+        step: int:
+            current training step
+        warmup_steps: int:
+            number of warmup steps
+        max_lr: float:
+            maximum learning rate
+        max_steps: int:
+            total number of training steps
+
+        Returns:
+        --------
+        Updates optimizer and returns updated learning rate
+    """
+    if step < warmup_steps:
+        warmup_percent_done = step / warmup_steps
+        lr = max_lr * warmup_percent_done
+        optim.lr = lr
+    else:
+        lr = 0.5 * (max_lr)(1 + np.cos(step / max_steps * np.pi))
+        optim.lr = lr
+
+    return lr
 
 def eval(model, data_loader, args, step, writer=None, save=True):
     """
@@ -73,7 +136,7 @@ def eval(model, data_loader, args, step, writer=None, save=True):
     model.eval()
     data_loader.dataset.training = False
 
-    print(f"Running Evaluation on {len(data_loader)} samples")
+    print(f"Running Evaluation on {100} samples")
     with torch.no_grad():
         np.random.seed(args.seed)
         loss = 0
@@ -81,6 +144,8 @@ def eval(model, data_loader, args, step, writer=None, save=True):
         mean_IOU = 0
 
         for i, batch in tqdm(enumerate(data_loader)):
+            if i == 100:
+                break
             images = batch["images"]
             flows = batch["flows"]
             if args.cue == "masks":
@@ -92,20 +157,20 @@ def eval(model, data_loader, args, step, writer=None, save=True):
             loss += F.mse_loss(flows, pred_flows).item()
 
             pred_masks = out["masks"].detach()
-            gt_masks = batch["masks"].detach().sum(dim=3, keepdim=True)  # Combine RGB channels into one
+            gt_masks = (
+                batch["masks"].detach().sum(dim=3, keepdim=True)
+            )  # Combine RGB channels into one
             B, N, T, C, H, W = gt_masks.shape
             gt_masks = gt_masks.reshape((B, N, T, H, W, C))
             pred_masks = pred_masks.transpose(1, 2)
 
-            pred_groups = pred_masks.reshape(
-                args.batch_size, N, -1
-            ).permute(0, 2, 1)
-            true_groups = gt_masks.reshape(
-                args.batch_size, N, -1
-            ).permute(0, 2, 1)
+            pred_groups = pred_masks.reshape(args.batch_size, N, -1).permute(0, 2, 1)
+            true_groups = gt_masks.reshape(args.batch_size, N, -1).permute(0, 2, 1)
             fg_ari += metrics.adjusted_rand_index(true_groups, pred_groups).mean()
 
-            gt_masks = gt_masks[:, 1:, ...].sum(dim=1)  # Combine individual mask slots and ignore backgrounds
+            gt_masks = gt_masks[:, 1:, ...].sum(
+                dim=1
+            )  # Combine individual mask slots and ignore backgrounds
             pred_masks = pred_masks.sum(dim=1)
             mean_IOU += metrics.mean_IOU(gt_masks, pred_masks)
 
@@ -150,39 +215,42 @@ def train(model, data_loader, args, step=0):
 
         out = model(images, cues=cue)
         loss = metric(out["recon_combined"], flows)
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         loss.backward()
-        # Clip gradients
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         optim.step()
+
         return out, loss.item()
 
     optim = torch.optim.Adam(model.parameters(), lr=args.lr)
     metric = F.mse_loss
     writer = SummaryWriter(args.log_dir)
 
-    while True:
+    while step < args.train_iters:
         start = time.time()
         for i, batch in enumerate(tqdm(data_loader)):
             batch_load = time.time()
+            lr = learning_rate_update(optim, step, args.warmup_steps, args.lr, args.train_iters)
             out, loss = train_step(batch, metric, model, optim)
             if i % args.log_every == 0:
                 print(f"Time taken to load data: {batch_load - start}")
                 # Reshape masks for foreground ari metric
                 pred_masks = out["masks"].detach()
-                gt_masks = batch["masks"].detach().sum(dim=3, keepdim=True)  # Combine RGB channels into one
+                gt_masks = (
+                    batch["masks"].detach().sum(dim=3, keepdim=True)
+                )  # Combine RGB channels into one
                 B, N, T, C, H, W = gt_masks.shape
                 gt_masks = gt_masks.reshape((B, N, T, H, W, C))
                 pred_masks = pred_masks.transpose(1, 2)
 
-                pred_groups = pred_masks.reshape(
-                    args.batch_size, N, -1
-                ).permute(0, 2, 1)
-                true_groups = gt_masks.reshape(
-                    args.batch_size, N, -1
-                ).permute(0, 2, 1)
+                pred_groups = pred_masks.reshape(args.batch_size, N, -1).permute(
+                    0, 2, 1
+                )
+                true_groups = gt_masks.reshape(args.batch_size, N, -1).permute(0, 2, 1)
                 fg_ari = metrics.adjusted_rand_index(true_groups, pred_groups)
 
-                gt_masks = gt_masks[:, 1:, ...].sum(dim=1)  # Combine individual mask slots and ignore backgrounds
+                gt_masks = gt_masks[:, 1:, ...].sum(
+                    dim=1
+                )  # Combine individual mask slots and ignore backgrounds
                 pred_masks = pred_masks.sum(dim=1)
                 mean_IOU = metrics.mean_IOU(gt_masks, pred_masks)
 
@@ -212,28 +280,31 @@ def train(model, data_loader, args, step=0):
                 print("\tFG-ARI: {}, Mean IOU: {}".format(fg_ari.mean(), mean_IOU))
 
             if step % args.eval_every == 0:
-                eval(model, data_loader, args, step, writer)
+                # eval(model, data_loader, args, step, writer)
 
                 checkpoint = {"model": model.state_dict(), "optim": optim, "step": step}
+                if not os.path.exists(args.checkpoint_dir):
+                    os.makedirs(args.checkpoint_dir, exist_ok=True)
                 torch.save(
                     checkpoint,
                     os.path.join(args.checkpoint_dir, "checkpoint_{}.pth".format(step)),
                 )
 
             step += 1
-            if step > args.train_iters:
-                print("Reached maximum training number of training steps...")
-                eval(model, data_loader, args, step, writer)
 
-                checkpoint = {"model": model.state_dict(), "optim": optim, "step": step}
-                torch.save(
-                    checkpoint,
-                    os.path.join(args.checkpoint_dir, "FINAL.pth".format(step)),
-                )
-                return
+    print("Reached maximum training number of training steps...")
+    eval(model, data_loader, args, step, writer)
+
+    checkpoint = {"model": model.state_dict(), "optim": optim, "step": step}
+    torch.save(
+        checkpoint,
+        os.path.join(args.checkpoint_dir, "FINAL.pth".format(step)),
+    )
+    return
+
 
 def load_latest(args):
-    checkpoint_path = os.path.join(args.save_dir, "checkpoint_*.pth")
+    checkpoint_path = os.path.join(args.checkpoint_dir, "checkpoint_*.pth")
     if not os.path.exists(checkpoint_path):
         return None
     checkpoints = glob.glob(checkpoint_path)
@@ -245,7 +316,13 @@ def load_latest(args):
 
 if __name__ == "__main__":
     dataloader = DataLoader(
-        gestalt.Gestalt(root_dir=args.data_dir, frames_per_scene=args.num_frames, train_test_split=0.9),
+        gestalt.Gestalt(
+            root_dir=args.data_dir,
+            top_level=args.top_level,
+            sub_level=args.sub_level,
+            frames_per_scene=args.num_frames,
+            train_test_split=0.9,
+        ),
         batch_size=args.batch_size,
         shuffle=True,
     )
@@ -259,6 +336,8 @@ if __name__ == "__main__":
 
     step = 0
     if args.load_latest_model:
-        model, optim, step = torch.load(os.path.join(args.save_dir, "latest_model.pt"))
+        model, optim, step = torch.load(
+            os.path.join(args.checkpoint_dir, "latest_model.pt")
+        )
         model.load_state_dict(model)
     train(model, dataloader, args, step)

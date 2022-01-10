@@ -43,7 +43,7 @@ class Gestalt(Dataset):
         self,
         root_dir="/om/user/yyf/CommonFate/scenes/",
         top_level=["voronoi", "noise"],
-        sub_level=["1", "2", "3"],
+        sub_level=["superquadric_2", "superquadric_3"],
         passes=["images", "masks", "flows"],
         max_num_objects=5,
         frames_per_scene=10,
@@ -51,14 +51,16 @@ class Gestalt(Dataset):
         resolution=(128, 128),
         transforms={},
         training=True,
-        train_test_split=0.2,
+        train_test_split=0.1,
         random_seed=42,
         color_channels="RGB",
-        use_h5=True
     ):
 
         self.root_dir = root_dir
-        self.use_h5 = use_h5
+        if self.root_dir.endswith(".hdf5"):
+            self.use_h5 = True
+        else:
+            self.use_h5 = False
 
         self.top_level = top_level
         self.sub_level = sub_level
@@ -75,53 +77,54 @@ class Gestalt(Dataset):
         self.color_channels = color_channels
 
         self.train_scenes, self.test_scenes = self.get_scene_paths()
-        self.real_frames_per_scene = len(
-            glob(os.path.join(self.train_scenes[0], "images", "*.png"))
-        )
+        if self.use_h5:
+            with h5.File(self.root_dir, "r", swmr=True, libver="latest") as f:
+                scene = f[self.train_scenes[0]]
+                images = scene["images"]["images"][:]
+                print(self.train_scenes[0], scene, list(scene.keys()), images.shape)
+                self.real_frames_per_scene = images.shape[0]
+        else:
+            self.real_frames_per_scene = len(
+                glob(os.path.join(self.train_scenes[0], "images", "*.png"))
+            )
         if self.frame_sampling_method == "consecutive":
             self.scene_splits = int(self.real_frames_per_scene / self.frames_per_scene)
         else:
             self.scene_splits = 1
+        print(self.real_frames_per_scene, self.scene_splits)
+
+    def list_files(self, top_level, sub_level):
+        if self.use_h5:
+            with h5.File(self.root_dir, "r", swmr=True, libver="latest") as f:
+                keys = list(f[top_level][sub_level].keys())
+                return [f"{top_level}/{sub_level}/{key}" for key in keys]
+        else:
+            data_path_pattern = os.path.join(self.root_dir, top_level, "*" + sub_level)
+            data_dir = glob(data_path_pattern)[0]
+            files = os.listdir(data_dir)
+            return [os.path.join(data_dir, f) for f in files]
 
     def get_scene_paths(self):
         train_scenes = []
         test_scenes = []
-
-        # split scenes into train and test
-        num_test = int(len(files) * self.train_test_split)
-
-        np.random.seed(self.random_seed)
-        test_idxs = sorted(
-            np.random.choice(range(len(files)), num_test, replace=False)
-        )
-
         for top in self.top_level:
             for sub in self.sub_level:
-                data_path_pattern = os.path.join(self.root_dir, top, "*" + sub)
-                data_dir = glob(data_path_pattern)[0]
-                if self.use_h5:
-                    with h5py.File(data_dir, "r", libver="latest", swmr=True) as f:
-                        files = list(f.keys())
-                        files = sorted(files)
-                        test_idx = 0
-                        for i, f in enumerate(files):
-                            if test_idx >= len(test_idxs) or i != test_idxs[test_idx]:
-                                train_scenes.append((data_dir, f))
-                            else:
-                                test_scenes.append((data_dir, f))
-                                test_idx += 1
+                files = self.list_files(top, sub)
+                files = sorted(files)
+                # split scenes into train and test
+                num_test = int(len(files) * self.train_test_split)
 
-                else:
-                    files = os.listdir(data_dir)
-                    files = sorted(files)
-                    test_idx = 0
-                    for i, f in enumerate(files):
-                        fpath = os.path.join(data_dir, f)
-                        if test_idx >= len(test_idxs) or i != test_idxs[test_idx]:
-                            train_scenes.append(fpath)
-                        else:
-                            test_scenes.append(fpath)
-                            test_idx += 1
+                np.random.seed(self.random_seed)
+                test_idxs = sorted(
+                    np.random.choice(range(len(files)), num_test, replace=False)
+                )
+                test_idx = 0
+                for i, f in enumerate(files):
+                    if test_idx >= len(test_idxs) or i != test_idxs[test_idx]:
+                        train_scenes.append(f)
+                    else:
+                        test_scenes.append(f)
+                        test_idx += 1
 
         return train_scenes, test_scenes
 
@@ -139,19 +142,16 @@ class Gestalt(Dataset):
     def load_image_data(
         self, image_pass, scene_idx, frame_idxs, color_channels="RGB", normalize=True
     ):
-        if self.use_h5:
-            # TODO
-            with h5py.File(self.root_dir, "r") as f:
-                data.close()
-                return
-        else:
-            scene = self.get_scenes(scene_idx)
-            pass_dir = os.path.join(scene, image_pass)
-            paths = [
-                os.path.join(pass_dir, f"Image{idx:04d}.png") for idx in frame_idxs
-            ]
-            images = []
-            for path in paths:
+        scene = self.get_scenes(scene_idx)
+        images = []
+        for idx in frame_idxs:
+            if self.use_h5:
+                with h5.File(self.root_dir, "r", swmr=True, libver="latest") as f:
+                    # Access image_pass twice bc of weird hdf5 external link thing
+                    img = f[scene][image_pass][image_pass][idx]
+            else:
+                pass_dir = os.path.join(scene, image_pass)
+                path = os.path.join(pass_dir, f"Image{idx:04d}.png")
                 img = Image.open(path).convert(color_channels)
                 if image_pass == "masks":
                     resample = Image.NEAREST
@@ -159,36 +159,37 @@ class Gestalt(Dataset):
                     resample = Image.BICUBIC
                 img = img.resize(self.resolution, resample=resample)
                 img = np.array(img).astype(np.uint8)
-                if len(img.shape) < 3:
-                    img = img[..., np.newaxis]  # add 1 channel for depths / masks
-                img = torch.from_numpy(img).permute(2, 0, 1).float()
 
-                # Unwrap masks so each object has its own mask slot
-                if image_pass == "masks":
-                    unique_masks = []
-                    masks = img.unique()
-                    for i in range(self.max_num_objects):
-                        if i >= len(masks):
-                            m = torch.zeros_like(img)
-                        else:
-                            mask = masks[i]
-                            m = torch.where(img == mask, img, torch.zeros_like(img))
-                            mask_idxs = m > 0
-                            m[mask_idxs] = 255.0
-                        unique_masks.append(m)
-                    img = torch.stack(unique_masks, 0)
+            if len(img.shape) < 3:
+                img = img[..., np.newaxis]  # add 1 channel for depths / masks
+            img = torch.from_numpy(img).permute(2, 0, 1).float()
 
-                images.append(img)
-
-            images = torch.stack(images, dim=0)
-
-            if normalize:
-                images = images / 255.0
-
+            # Unwrap masks so each object has its own mask slot
             if image_pass == "masks":
-                images = images.permute(1, 0, 2, 3, 4)  # N_OBJECTS x T x C x H x W
+                unique_masks = []
+                masks = img.unique()
+                for i in range(self.max_num_objects):
+                    if i >= len(masks):
+                        m = torch.zeros_like(img)
+                    else:
+                        mask = masks[i]
+                        m = torch.where(img == mask, img, torch.zeros_like(img))
+                        mask_idxs = m > 0
+                        m[mask_idxs] = 255.0
+                    unique_masks.append(m)
+                img = torch.stack(unique_masks, 0)
 
-            return images.to(self.device)
+            images.append(img)
+
+        images = torch.stack(images, dim=0)
+
+        if normalize:
+            images = images / 255.0
+
+        if image_pass == "masks":
+            images = images.permute(1, 0, 2, 3, 4)  # N_OBJECTS x T x C x H x W
+
+        return images.to(self.device)
 
     def load_config_data(self, config_pass, scene, frame_idxs):
         scene = self.get_scenes(scene_idx)
@@ -274,10 +275,13 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
     data = DataLoader(
-        Gestalt(passes=["images", "flows", "depths", "masks"]),
+        Gestalt(
+            root_dir="/om2/user/yyf/CommonFate/scenes/gestalt.hdf5",
+            passes=["images", "flows", "depths", "masks"]
+        ),
         batch_size=4,
-        shuffle=True,
     )
+    print(len(data))
     batch = next(iter(data))
     print(batch.keys())
     print(

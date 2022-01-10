@@ -178,7 +178,9 @@ class Initializer(nn.Module):
         )
 
         self.mlp2 = nn.Sequential(
-            nn.Linear(slot_dim, slot_dim), nn.ReLU(), nn.Linear(slot_dim, slot_dim),
+            nn.Linear(slot_dim, slot_dim),
+            nn.ReLU(),
+            nn.Linear(slot_dim, slot_dim),
         )
 
         self.layer_norm1 = nn.LayerNorm(hid_dim)
@@ -265,7 +267,7 @@ class SlotAttentionVideo(nn.Module):
         self,
         hid_dim=64,
         resolution=(128, 128),
-        num_slots=8,
+        num_slots=5,
         slot_dim=64,
         slot_iterations=1,
         initializer_dim=3,

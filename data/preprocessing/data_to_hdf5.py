@@ -32,7 +32,7 @@ def gestalt_to_hdf5():
 
     logfile_path = os.path.join(args.data_dir, args.top_level, args.sub_level + "_log.txt")
     with open(logfile_path, "w") as logfile:
-        with hp.File(new_dataset_path, mode) as h5_data:
+        with hp.File(new_dataset_path, mode, swmr=True, libver="latest") as h5_data:
             data_path_pattern = os.path.join(args.data_dir, args.top_level, "*" + args.sub_level)
             data_dir = glob(data_path_pattern)[0]
             files = os.listdir(data_dir)
@@ -78,7 +78,7 @@ def gestalt_to_hdf5():
                         img = np.array(img).astype(np.uint8)
                         images.append(img)
 
-                    images = np.concatenate(images, axis=0)
+                    images = np.stack(images, axis=0)
                     print(f"Pass: {image_pass}, Shape: {images.shape}")
 
                     pass_data = pass_group.create_dataset(image_pass, images.shape)

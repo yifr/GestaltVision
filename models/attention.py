@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+
 def scaled_dot_product(q, k, v, mask=None):
     d_k = q.size()[-1]
     attn_logits = torch.matmul(q, k.transpose(-2, -1))
@@ -31,9 +32,8 @@ class MultiHeadAttention(nn.Module):
         _dim = self.dim_head * num_heads
         self.heads = num_heads
         self.to_qvk = nn.Linear(embed_dim, _dim * 3, bias=False)
-        self.W_0 = nn.Linear( _dim, embed_dim, bias=False)
+        self.W_0 = nn.Linear(_dim, embed_dim, bias=False)
         self.scale_factor = self.dim_head ** -0.5
-
 
     def forward(self, x, mask=None, return_attention=False):
         assert x.dim() == 3
@@ -44,11 +44,13 @@ class MultiHeadAttention(nn.Module):
         # decomposition to q,v,k and cast to tuple
         # the resulted shape before casting to tuple will be:
         # [3, batch, heads, tokens, dim_head]
-        q, k, v = tuple(rearrange(qkv, 'b t (d k h) -> k b h t d ', k=3, h=self.heads))
+        q, k, v = tuple(rearrange(qkv, "b t (d k h) -> k b h t d ", k=3, h=self.heads))
 
         # Step 3
         # resulted shape will be: [batch, heads, tokens, tokens]
-        scaled_dot_prod = torch.einsum('b h i d , b h j d -> b h i j', q, k) * self.scale_factor
+        scaled_dot_prod = (
+            torch.einsum("b h i d , b h j d -> b h i j", q, k) * self.scale_factor
+        )
 
         if mask is not None:
             assert mask.shape == scaled_dot_prod.shape[2:]
@@ -57,13 +59,14 @@ class MultiHeadAttention(nn.Module):
         attention = torch.softmax(scaled_dot_prod, dim=-1)
 
         # Step 4. Calc result per batch and per head h
-        out = torch.einsum('b h i j , b h j d -> b h i d', attention, v)
+        out = torch.einsum("b h i j , b h j d -> b h i d", attention, v)
 
         # Step 5. Re-compose: merge heads with dim_head d
         out = rearrange(out, "b h t d -> b t (h d)")
 
         # Step 6. Apply final linear transformation layer
         return self.W_0(out)
+
 
 class SlotAttention(nn.Module):
     def __init__(
@@ -85,9 +88,9 @@ class SlotAttention(nn.Module):
         self.mlp_hidden_dim = mlp_hidden_dim
         self.epsilon = epsilon
 
-        self.queries = nn.Linear(slot_dim, slot_dim)
-        self.keys = nn.Linear(slot_dim, slot_dim)
-        self.values = nn.Linear(slot_dim, slot_dim)
+        self.queries = nn.Linear(slot_dim, slot_dim, bias=False)
+        self.keys = nn.Linear(slot_dim, slot_dim, bias=False)
+        self.values = nn.Linear(slot_dim, slot_dim, bias=False)
 
         self.input_norm = nn.LayerNorm(slot_dim)
         self.mlp_norm = nn.LayerNorm(slot_dim)
