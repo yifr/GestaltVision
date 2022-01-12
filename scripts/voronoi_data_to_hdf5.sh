@@ -9,4 +9,4 @@
 #SBATCH --mem=24G
 #SBATCH --out=%x_4.out
 
-python data/preprocessing/data_to_hdf5.py --top_level voronoi --sub_level superquadric_4 --output_dir /om2/user/yyf/CommonFate/scenes --data_dir /om/user/yyf/CommonFate/scenes --image_passes images masks flows depths
+python data/preprocessing/data_to_hdf5.py --top_level voronoi --sub_level superquadric_4 --output_dir /om2/user/yyf/CommonFate/scenes --data_dir /om/user/yyf/CommonFate/scenes --image_passes images masks flows depths normals

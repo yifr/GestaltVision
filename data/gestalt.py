@@ -34,7 +34,7 @@ class Gestalt(Dataset):
         resolution: Tuple[int]: resolution to resize images to
         transforms: Dict[str:List[transforms]]: Dictionary mapping pass name to list of any additional transforms to apply
         training: Bool: whether to supply training or testing data
-        train_test_split: float: percentage of scenes to allocate to testing set
+        train_split: float: percentage of scenes to allocate to training set
         random_seed: int: random seed for train/test split
         color_channels: str: "RGB" or "L" for black and white
     """
@@ -51,7 +51,7 @@ class Gestalt(Dataset):
         resolution=(128, 128),
         transforms={},
         training=True,
-        train_test_split=0.1,
+        train_split=0.1,
         random_seed=42,
         color_channels="RGB",
     ):
@@ -70,7 +70,7 @@ class Gestalt(Dataset):
         self.frame_sampling_method = frame_sampling_method
         self.resolution = resolution
         self.transforms = transforms
-        self.train_test_split = train_test_split
+        self.train_split = train_split
         self.random_seed = random_seed
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.training = training
@@ -112,7 +112,7 @@ class Gestalt(Dataset):
                 files = self.list_files(top, sub)
                 files = sorted(files)
                 # split scenes into train and test
-                num_test = int(len(files) * self.train_test_split)
+                num_test = int(len(files) * (1 - self.train_split))
 
                 np.random.seed(self.random_seed)
                 test_idxs = sorted(

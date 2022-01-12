@@ -27,11 +27,11 @@ parser.add_argument("--cue", type=str, default="masks", help="Object Cue for SAV
 
 # Data params
 parser.add_argument("--num_frames", type=int, default=6, help="Frames to train on")
-parser.add_argument("--batch_size", type=int, default=32, help="Batch Size")
+parser.add_argument("--batch_size", type=int, default=16, help="Batch Size")
 
 # Training params
 parser.add_argument("--lr", type=float, default=1e-4, help="Learning Rate")
-parser.add_argument("--warmup_steps" type=int, default=2500, help="Warmup steps for learning rate")
+parser.add_argument("--warmup_steps", type=int, default=2500, help="Warmup steps for learning rate")
 parser.add_argument("--grad_clip", type=float, default=0.05, help="Gradient Clipping")
 parser.add_argument(
     "--train_iters", type=int, default=10e4, help="Number of training steps"
@@ -118,7 +118,7 @@ def learning_rate_update(optim, step, warmup_steps, max_lr, max_steps):
         lr = max_lr * warmup_percent_done
         optim.lr = lr
     else:
-        lr = 0.5 * (max_lr)(1 + np.cos(step / max_steps * np.pi))
+        lr = 0.5 * (max_lr) * (1 + np.cos(step / max_steps * np.pi))
         optim.lr = lr
 
     return lr
@@ -225,14 +225,20 @@ def train(model, data_loader, args, step=0):
     metric = F.mse_loss
     writer = SummaryWriter(args.log_dir)
 
+    prof = torch.profiler.profile(
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(args.log_dir),
+                record_shapes=True,
+                with_stack=True
+    )
+    prof.start()
+
     while step < args.train_iters:
-        start = time.time()
+
         for i, batch in enumerate(tqdm(data_loader)):
-            batch_load = time.time()
             lr = learning_rate_update(optim, step, args.warmup_steps, args.lr, args.train_iters)
             out, loss = train_step(batch, metric, model, optim)
             if i % args.log_every == 0:
-                print(f"Time taken to load data: {batch_load - start}")
                 # Reshape masks for foreground ari metric
                 pred_masks = out["masks"].detach()
                 gt_masks = (
@@ -278,9 +284,10 @@ def train(model, data_loader, args, step=0):
 
                 print("Step: {}, Loss: {}".format(step, loss))
                 print("\tFG-ARI: {}, Mean IOU: {}".format(fg_ari.mean(), mean_IOU))
+                prof.step()
 
-            if step % args.eval_every == 0:
-                # eval(model, data_loader, args, step, writer)
+            if step % args.eval_every == 0 and step > 0:
+                eval(model, data_loader, args, step, writer)
 
                 checkpoint = {"model": model.state_dict(), "optim": optim, "step": step}
                 if not os.path.exists(args.checkpoint_dir):
@@ -292,6 +299,7 @@ def train(model, data_loader, args, step=0):
 
             step += 1
 
+    prof.stop()
     print("Reached maximum training number of training steps...")
     eval(model, data_loader, args, step, writer)
 
@@ -305,8 +313,6 @@ def train(model, data_loader, args, step=0):
 
 def load_latest(args):
     checkpoint_path = os.path.join(args.checkpoint_dir, "checkpoint_*.pth")
-    if not os.path.exists(checkpoint_path):
-        return None
     checkpoints = glob.glob(checkpoint_path)
     if len(checkpoints) == 0:
         return None
@@ -321,7 +327,7 @@ if __name__ == "__main__":
             top_level=args.top_level,
             sub_level=args.sub_level,
             frames_per_scene=args.num_frames,
-            train_test_split=0.9,
+            train_split=0.95,
         ),
         batch_size=args.batch_size,
         shuffle=True,
@@ -332,12 +338,19 @@ if __name__ == "__main__":
     ).float()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if args.multi_gpu:
+        dataloader = nn.DataParallel(dataloader)
+        model = nn.DataParallel(model)
     model.to(device)
 
     step = 0
     if args.load_latest_model:
-        model, optim, step = torch.load(
-            os.path.join(args.checkpoint_dir, "latest_model.pt")
-        )
-        model.load_state_dict(model)
+        checkpoint = load_latest(args)
+        if checkpoint:
+            model_weights = checkpoint.get("model")
+            model.load_state_dict(model_weights)
+            step = checkpoint["step"]
+        else:
+            print("NO MODEL FOUND ==> STARTING TRAINING FROM SCRATCH")
+
     train(model, dataloader, args, step)

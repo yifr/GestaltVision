@@ -9,4 +9,4 @@
 #SBATCH --mem=24G
 #SBATCH --array=1-4
 
-python data/preprocessing/data_to_hdf5.py --top_level noise --sub_level superquadric_${SLURM_ARRAY_TASK_ID} --output_dir /om2/user/yyf/CommonFate/scenes --data_dir /om/user/yyf/CommonFate/scenes --image_passes images masks flows depths
+python data/preprocessing/data_to_hdf5.py --top_level noise --sub_level superquadric_${SLURM_ARRAY_TASK_ID} --output_dir /om2/user/yyf/CommonFate/scenes --data_dir /om/user/yyf/CommonFate/scenes --image_passes images masks flows depths normals

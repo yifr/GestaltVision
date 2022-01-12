@@ -15,6 +15,7 @@ parser.add_argument("--output_dir", type=str, help="Root dataset directory")
 parser.add_argument("--output_name", type=str, help="Name of the output hdf5 file")
 parser.add_argument("--image_passes", type=str, nargs="+", help="Image passes to use")
 parser.add_argument("--resize", type=int, default=128, help="resize images to size")
+parser.add_argument("--modify", action="store_true", help="whether to write new or modify existing dataset")
 args = parser.parse_args()
 
 def gestalt_to_hdf5():
@@ -23,7 +24,7 @@ def gestalt_to_hdf5():
             os.makedirs(root_dir)
 
     new_dataset_path = os.path.join(root_dir, args.sub_level + ".hdf5")
-    if os.path.exists(new_dataset_path):
+    if os.path.exists(new_dataset_path) and args.modify:
         mode = "a"
         print("Adding additional data to existing file", new_dataset_path)
     else:
@@ -32,7 +33,7 @@ def gestalt_to_hdf5():
 
     logfile_path = os.path.join(args.data_dir, args.top_level, args.sub_level + "_log.txt")
     with open(logfile_path, "w") as logfile:
-        with hp.File(new_dataset_path, mode, swmr=True, libver="latest") as h5_data:
+        with hp.File(new_dataset_path, mode, libver="latest") as h5_data:
             data_path_pattern = os.path.join(args.data_dir, args.top_level, "*" + args.sub_level)
             data_dir = glob(data_path_pattern)[0]
             files = os.listdir(data_dir)
@@ -49,13 +50,13 @@ def gestalt_to_hdf5():
                 print(f)
                 for image_pass in args.image_passes:
                     print(f"Loading {image_pass}...")
-                    fpath = os.path.join(data_dir, f, image_pass)
-                    if not os.path.exists(fpath):
-                        print("No images found at", fpath)
+                    pass_path = os.path.join(data_dir, f, image_pass)
+                    if not os.path.exists(pass_path):
+                        print("No images found at", pass_path)
                         continue
 
-                    if len(os.listdir(fpath)) == 0:
-                        print("No images found at", fpath)
+                    if len(os.listdir(pass_path)) == 0:
+                        print("No images found at", pass_path)
                         continue
 
                     if scene_group.get(image_pass):
@@ -63,13 +64,11 @@ def gestalt_to_hdf5():
                         log_text += image_pass + "\t"
                         continue
 
-                    pass_group = scene_group.create_group(image_pass)
-                    image_names = os.listdir(fpath)
-                    n_images = len(image_names)
+                    image_names = glob(os.path.join(pass_path, "Image*.png"))
+                    image_paths = sorted(image_names)
                     images = []
-                    for image_name in image_names:
-                        img_path = os.path.join(fpath, image_name)
-                        img = Image.open(img_path).convert("RGB")
+                    for image_path in image_paths:
+                        img = Image.open(image_path).convert("RGB")
                         if image_pass == "masks":
                             resample = Image.NEAREST
                         else:
@@ -81,7 +80,7 @@ def gestalt_to_hdf5():
                     images = np.stack(images, axis=0)
                     print(f"Pass: {image_pass}, Shape: {images.shape}")
 
-                    pass_data = pass_group.create_dataset(image_pass, images.shape)
+                    pass_data = scene_group.create_dataset(image_pass, images.shape)
                     pass_data[...] = images
                     log_text += image_pass + "\t"
 
