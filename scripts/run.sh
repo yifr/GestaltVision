@@ -16,4 +16,6 @@ python train_savi.py --data_dir /om2/user/yyf/CommonFate/scenes/ \
         --sub_level superquadric_2 superquadric_3 \
         --log_dir /om2/user/yyf/GestaltVision/runs/SAVI/${run_name} \
         --checkpoint_dir /om2/user/yyf/GestaltVision/saved_models/SAVI/${run_name} \
-        --batch_size 4
+        --batch_size 4 \
+        --load_latest_model
+

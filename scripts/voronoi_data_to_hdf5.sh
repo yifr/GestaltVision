@@ -7,6 +7,7 @@
 #SBATCH -c 32
 #SBATCH -p normal
 #SBATCH --mem=24G
-#SBATCH --out=%x_4.out
+#SBATCH --array=1-3
+#SBATCH --out=%x_%a.out
 
-python data/preprocessing/data_to_hdf5.py --top_level voronoi --sub_level superquadric_4 --output_dir /om2/user/yyf/CommonFate/scenes --data_dir /om/user/yyf/CommonFate/scenes --image_passes images masks flows depths normals
+python data/preprocessing/data_to_hdf5.py --top_level voronoi --sub_level superquadric_${SLURM_ARRAY_TASK_ID} --output_dir /om2/user/yyf/CommonFate/scenes --data_dir /om/user/yyf/CommonFate/scenes --image_passes images masks flows depths normals

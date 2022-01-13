@@ -41,6 +41,7 @@ parser.add_argument(
     "--eval_every", type=int, default=1000, help="How often to run eval"
 )
 parser.add_argument("--seed", type=int, default=42, help="random seed")
+parser.add_argument("--multi-gpu", action="store_true", help="Use multiple GPUs")
 
 # Paths
 parser.add_argument(

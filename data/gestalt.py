@@ -126,6 +126,10 @@ class Gestalt(Dataset):
                         test_scenes.append(f)
                         test_idx += 1
 
+        np.random.seed(self.random_seed)
+        np.random.shuffle(train_scenes)
+        np.random.seed(self.random_seed)
+        np.random.shuffle(test_scenes)
         return train_scenes, test_scenes
 
     def get_scenes(self, scene_idx=-1):
