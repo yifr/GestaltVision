@@ -5,103 +5,99 @@ import torch.nn.functional as F
 
 
 class UNet(nn.Module):
-    def __init__(self, n_channels, n_classes, width_multiplier=1, trilinear=True, use_ds_conv=False):
+    def __init__(self, n_channels, n_classes):
         """A simple 3D Unet, adapted from a 2D Unet from https://github.com/milesial/Pytorch-UNet/tree/master/unet
         Arguments:
           n_channels = number of input channels; 3 for RGB, 1 for grayscale input
           n_classes = number of output channels/classes
-          width_multiplier = how much 'wider' your UNet should be compared with a standard UNet
-                  default is 1;, meaning 32 -> 64 -> 128 -> 256 -> 512 -> 256 -> 128 -> 64 -> 32
-                  higher values increase the number of kernels pay layer, by that factor
-          trilinear = use trilinear interpolation to upsample; if false, 3D convtranspose layers will be used instead
-          use_ds_conv = if True, we use depthwise-separable convolutional layers. in my experience, this is of little help. This
-                  appears to be because with 3D data, the vast vast majority of GPU RAM is the input data/labels, not the params, so little
-                  VRAM is saved by using ds_conv, and yet performance suffers."""
+        """
         super(UNet, self).__init__()
-        _channels = (32, 64, 128, 256, 512)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print("Setting model to ", self.device)
         self.n_channels = n_channels
         self.n_classes = n_classes
-        self.channels = [int(c*width_multiplier) for c in _channels]
-        self.trilinear = trilinear
-        self.convtype = DepthwiseSeparableConv3d if use_ds_conv else nn.Conv3d
+        self.channels = [32, 64, 128, 256, 512]
+        self.convtype = nn.Conv3d
 
-        self.inc = DoubleConv(n_channels, self.channels[0], conv_type=self.convtype)
+        self.enc = Conv(n_channels, self.channels[0], conv_type=self.convtype)
         self.down1 = Down(self.channels[0], self.channels[1], conv_type=self.convtype)
-        factor = 2 if trilinear else 1
-        self.down2 = Down(self.channels[1], self.channels[2] // factor, conv_type=self.convtype)
-        # self.down3 = Down(self.channels[2], self.channels[3] // factor, conv_type=self.convtype)
+        self.down2 = Down(self.channels[1], self.channels[2], conv_type=self.convtype)
+        self.down3 = Down(self.channels[2], self.channels[3], conv_type=self.convtype)
 
-        # self.down4 = Down(self.channels[3], self.channels[4] // factor, conv_type=self.convtype)
-        # self.up1 = Up(self.channels[4], self.channels[3] // factor, trilinear)
+        self.down4 = Down(self.channels[3], self.channels[4] , conv_type=self.convtype)
+        self.up1 = Up(self.channels[4], self.channels[3])
 
-        # self.up2 = Up(self.channels[3], self.channels[2] // factor, trilinear)
-        self.up3 = Up(self.channels[2], self.channels[1] // factor, trilinear)
-        self.up4 = Up(self.channels[1], self.channels[0], trilinear)
+        self.up2 = Up(self.channels[3], self.channels[2])
+        self.up3 = Up(self.channels[2], self.channels[1])
+        self.up4 = Up(self.channels[1], self.channels[0])
         self.outc = OutConv(self.channels[0], n_classes)
 
     def forward(self, x):
-        x1 = self.inc(x)
+        x1 = self.enc(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
-        # x4 = self.down3(x3)
-        # x5 = self.down4(x4)
-        # x = self.up1(x5, x4)
-        # x = self.up2(x4, x3)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x = self.up1(x5, x4)
+        x = self.up2(x4, x3)
         x = self.up3(x3, x2)
         x = self.up4(x, x1)
         logits = self.outc(x)
         return logits
 
-    def get_metrics(self, images, masks, criterion):
+    def get_metrics(self, images, targets, criterion, target_name="masks"):
         images = images.to(self.device).type(torch.float32)
-        masks = masks.to(self.device).type(torch.LongTensor)
-        output_masks = F.softmax(self.forward(images), dim=1)
-        pred_masks = output_masks.reshape(1, self.n_classes, -1).to(self.device)
-        gt_masks = masks.reshape(1, -1).to(self.device)
-        loss = criterion(pred_masks, gt_masks)
+        targets = targets.to(self.device).type(torch.float32)
+        if images.shape[2] == self.n_channels:
+            images = images.permute(0, 2, 1, 3, 4)  # B x C x T x H x W
+            targets = targets.permute(0, 2, 1, 3, 4)
+
+        output_targets = self.forward(images)
+        if target_name == "masks":
+            output_targets = F.softmax(output_targets, dim=1)
+            pred_targets = output_targets.reshape(1, self.n_classes, -1).to(self.device)
+            gt_targets = targets.reshape(1, -1).to(self.device)
+        else:
+            pred_targets = output_targets.to(self.device)
+            gt_targets = targets.to(self.device)
+        loss = criterion(pred_targets, gt_targets)
 
         metrics = {}
         metrics["loss"] = loss
-        pred_mask_images = output_masks.argmax(dim=1)
         metrics["images"] = images
-        metrics["gt_masks"] = masks
-        metrics["predicted_masks"] = pred_mask_images
+        metrics[f"gt_{target_name}"] = targets
+        metrics[f"predicted_{target_name}"] = pred_targets
 
         return loss, metrics
 
-    def log_metrics(self, writer, step, metrics, phase="train"):
+    def log_metrics(self, writer, step, metrics, target="masks", phase="train", n_per_batch=4):
         print("Logging metrics...")
         writer.add_scalar(f"{phase}/loss", metrics["loss"].item(), step)
-        predicted_masks = metrics["predicted_masks"].detach().cpu().unsqueeze(0)
-        predicted_masks = predicted_masks.permute(0, 2, 1, 3, 4)
-        gt_masks = metrics["gt_masks"].detach().cpu().permute(0, 2, 1, 3, 4)
-        images = metrics["images"].detach().cpu().permute(0, 2, 1, 3, 4)
-        writer.add_video(f"{phase}/predicted_mask", predicted_masks, step)
-        writer.add_video(f"{phase}/gt_masks", gt_masks, step)
+        predicted_target = metrics[f"predicted_{target}"].detach().cpu().unsqueeze(0)[:n_per_batch]
+        predicted_target = predicted_target.permute(0, 2, 1, 3, 4)
+        gt_target = metrics[f"gt_{target}"].detach().cpu().permute(0, 2, 1, 3, 4)[:n_per_batch]
+        images = metrics["images"].detach().cpu().permute(0, 2, 1, 3, 4)[:n_per_batch]
+        writer.add_video(f"{phase}/predicted_{target}", predicted_target, step)
+        writer.add_video(f"{phase}/gt_{target}", gt_target, step)
         writer.add_video(f"{phase}/input_video", images, step)
 
         return
 
-class DoubleConv(nn.Module):
+class Conv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
 
     def __init__(self, in_channels, out_channels, conv_type=nn.Conv3d, mid_channels=None):
         super().__init__()
         if not mid_channels:
             mid_channels = out_channels
-        self.double_conv = nn.Sequential(
-            conv_type(in_channels, mid_channels, kernel_size=3, padding=1),
+        self.conv = nn.Sequential(
+            conv_type(in_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm3d(mid_channels),
             nn.ReLU(inplace=True),
-            conv_type(mid_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm3d(out_channels),
-            nn.ReLU(inplace=True)
         )
 
     def forward(self, x):
-        return self.double_conv(x)
+        return self.conv(x)
 
 
 class Down(nn.Module):
@@ -111,7 +107,7 @@ class Down(nn.Module):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
             nn.MaxPool3d(2),
-            DoubleConv(in_channels, out_channels, conv_type=conv_type)
+            Conv(in_channels, out_channels, conv_type=conv_type)
         )
 
     def forward(self, x):
@@ -121,16 +117,11 @@ class Down(nn.Module):
 class Up(nn.Module):
     """Upscaling then double conv"""
 
-    def __init__(self, in_channels, out_channels, trilinear=False):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
 
-        # if trilinear, use the normal convolutions to reduce the number of channels
-        if trilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels, mid_channels=in_channels // 2)
-        else:
-            self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-            self.conv = DoubleConv(in_channels, out_channels)
+        self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+        self.conv = Conv(in_channels, out_channels)
 
 
     def forward(self, x1, x2):
@@ -170,21 +161,23 @@ class DepthwiseSeparableConv3d(nn.Module):
 
 
 if __name__=="__main__":
-    from dorsalventral.data.CommonFate import CommonFate
+    import sys
+    sys.path.append("../")
+    from data import gestalt
     from torch.utils.data import DataLoader
     import torchvision.transforms as T
 
-    model = UNet(1, 2, trilinear=True)
+    model = UNet(1, 2)
     transform = T.Compose([T.PILToTensor(), T.Resize((128, 128))])
     transforms = {"masks": transform, "images": transform}
 
-    data_dir = "/om2/user/yyf/CommonFate/scenes/gestalt_masks_multiscene"
-    data = DataLoader(CommonFate(data_dir, images_per_scene=32, transforms=transforms))
+    data_dir = "/om2/user/yyf/CommonFate/scenes/noise"
+    data = DataLoader(Gestalt(data_dir, top_level=["voronoi"], sub_level=["superquadric_3"], frames_per_scene=32))
     criterion = nn.CrossEntropyLoss()
 
     batch = next(iter(data))
     print("images: ", batch["images"].shape, "masks: ", batch["masks"].shape)
-    metrics = model.get_metrics(batch["images"], batch["masks"], criterion)
+    metrics = model.get_metrics(batch["images"], batch["masks"], criterion, "masks")
 
     print("loss:" , metrics["loss"].item())
     print("predicted masks:", metrics["predicted_masks"].shape)

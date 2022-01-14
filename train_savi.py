@@ -218,7 +218,7 @@ def train(model, data_loader, args, step=0):
 
         out = model(images, cues=cue)
         loss = metric(out["recon_combined"], flows)
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         loss.backward()
         optim.step()
 

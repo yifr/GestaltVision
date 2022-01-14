@@ -51,7 +51,7 @@ class Gestalt(Dataset):
         resolution=(128, 128),
         transforms={},
         training=True,
-        train_split=0.1,
+        train_split=0.9,
         random_seed=42,
         color_channels="RGB",
     ):
@@ -77,6 +77,7 @@ class Gestalt(Dataset):
         self.color_channels = color_channels
 
         self.train_scenes, self.test_scenes = self.get_scene_paths()
+        print(f"{len(self.train_scenes)} # training scenes, {len(self.test_scenes)} # test scenes")
         if self.use_h5:
             with h5.File(self.root_dir, "r", swmr=True, libver="latest") as f:
                 scene = f[self.train_scenes[0]]
@@ -91,7 +92,6 @@ class Gestalt(Dataset):
             self.scene_splits = int(self.real_frames_per_scene / self.frames_per_scene)
         else:
             self.scene_splits = 1
-        print(self.real_frames_per_scene, self.scene_splits)
 
     def list_files(self, top_level, sub_level):
         if self.use_h5:
@@ -223,8 +223,10 @@ class Gestalt(Dataset):
         return data.to(self.device)
 
     def __len__(self):
-        scenes = self.get_scenes()
-        length = len(scenes) * self.scene_splits
+        if self.training:
+            length = len(self.train_scenes)
+        else:
+            length = len(self.test_scenes)
         return length
 
     def get_info(self, idx):
