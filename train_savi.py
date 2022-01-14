@@ -177,6 +177,7 @@ def eval(model, data_loader, args, step, writer=None, save=True):
 
             gt_masks = gt_masks.reshape(B, T, C, H, W)
             pred_masks = pred_masks.reshape(B, T, C, H, W)
+            recons = out["recons"].sum(dim=2).reshape(B, T, 3, H, W)
 
         mean_IOU /= len(data_loader)
         fg_ari /= len(data_loader)
@@ -192,6 +193,7 @@ def eval(model, data_loader, args, step, writer=None, save=True):
             writer.add_video("eval/gt_flow", flows[: args.plot_n_videos], step)
             writer.add_video("eval/pred_masks", pred_masks[: args.plot_n_videos], step)
             writer.add_video("eval/gt_masks", gt_masks[: args.plot_n_videos], step)
+            writer.add_video("eval/slot_recons", recons[: args.plot_n_videos], step)
 
         print("=" * 30 + " EVALUATION " + "=" * 30)
         print("Step: {}, Eval Loss: {}".format(step, i, loss))
@@ -263,6 +265,9 @@ def train(model, data_loader, args, step=0):
 
                 gt_masks = gt_masks.reshape(B, T, C, H, W)
                 pred_masks = pred_masks.reshape(B, T, C, H, W)
+                print("recons", out["recons"].shape, out["recons"].sum(dim=2).shape)
+                recons = out["recons"].sum(dim=2).reshape(B, T, 3, H, W)
+
                 writer.add_scalar("train/loss", loss, step)
                 writer.add_scalar("train/fg-ARI", fg_ari.mean(), step)
                 writer.add_scalar("train/mean_IOU", mean_IOU, step)
@@ -282,6 +287,7 @@ def train(model, data_loader, args, step=0):
                 writer.add_video(
                     "train/pred_masks", pred_masks[: args.plot_n_videos], step
                 )
+                writer.add_video("train/slot_recons", recons[: args.plot_n_videos], step)
 
                 print("Step: {}, Loss: {}".format(step, loss))
                 print("\tFG-ARI: {}, Mean IOU: {}".format(fg_ari.mean(), mean_IOU))
