@@ -46,7 +46,7 @@ class Gestalt(Dataset):
         sub_level=["superquadric_2", "superquadric_3"],
         passes=["images", "masks", "flows"],
         max_num_objects=5,
-        frames_per_scene=10,
+        frames_per_scene=6,
         frame_sampling_method="consecutive",
         resolution=(128, 128),
         transforms={},
@@ -224,9 +224,9 @@ class Gestalt(Dataset):
 
     def __len__(self):
         if self.training:
-            length = len(self.train_scenes)
+            length = len(self.train_scenes) * self.scene_splits
         else:
-            length = len(self.test_scenes)
+            length = len(self.test_scenes) * self.scene_splits
         return length
 
     def get_info(self, idx):
@@ -282,8 +282,11 @@ if __name__ == "__main__":
 
     data = DataLoader(
         Gestalt(
-            root_dir="/om2/user/yyf/CommonFate/scenes/gestalt.hdf5",
-            passes=["images", "flows", "depths", "masks"]
+            root_dir="/om2/user/yyf/CommonFate/scenes/",
+            passes=["images", "flows", "depths", "masks"],
+            top_level=["voronoi", "noise"],
+            sub_level=["superquadric_1", "superquadric_2"],
+            frames_per_scene=6
         ),
         batch_size=4,
     )

@@ -73,7 +73,7 @@ class UNet(nn.Module):
     def log_metrics(self, writer, step, metrics, target="masks", phase="train", n_per_batch=4):
         print("Logging metrics...")
         writer.add_scalar(f"{phase}/loss", metrics["loss"].item(), step)
-        predicted_target = metrics[f"predicted_{target}"].detach().cpu().unsqueeze(0)[:n_per_batch]
+        predicted_target = metrics[f"predicted_{target}"].detach().cpu()[:n_per_batch]
         predicted_target = predicted_target.permute(0, 2, 1, 3, 4)
         gt_target = metrics[f"gt_{target}"].detach().cpu().permute(0, 2, 1, 3, 4)[:n_per_batch]
         images = metrics["images"].detach().cpu().permute(0, 2, 1, 3, 4)[:n_per_batch]

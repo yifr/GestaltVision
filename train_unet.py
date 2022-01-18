@@ -63,7 +63,7 @@ def train(args, train_loader, model, start_step=0):
 
     n_params = sum([np.prod(v.shape) for v in net.parameters()])
     print("Parameters in network:", n_params)
-    print("Number training samples: ", len(train_loader))
+    print("Number training batches: ", len(train_loader))
     writer = SummaryWriter(log_dir=args.log_dir + args.run_name)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -101,7 +101,7 @@ def train(args, train_loader, model, start_step=0):
                 with torch.no_grad():
                     train_loader.dataset.training = False
                     print(
-                        f"Running evaluation step on {len(train_loader)} test videos..."
+                        f"Running evaluation step on {len(train_loader)} test batches..."
                     )
                     for test_step, batch in tqdm(enumerate(train_loader)):
                         # print(data.shape)
@@ -145,7 +145,7 @@ def train(args, train_loader, model, start_step=0):
                 print("Saving model to: ", checkpoint_path)
                 torch.save(state, checkpoint_path)
 
-                train_loader.dataset.train = True
+                train_loader.dataset.training = True
                 model.train()
             step += 1
 

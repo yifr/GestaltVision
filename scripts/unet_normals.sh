@@ -7,18 +7,19 @@
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=48GB
 #SBATCH -p tenenbaum
-#SBATCH --mem=48G
+#SBATCH --mem=84G
 #SBATCH --out=unet_trgt=normals_tex=all_shapes=2,3.out
 
-run_name="unet_trgt=normals_tex=all_shapes=2,3"
+run_name="unet_trgt=normalss_tex=all_shapes=2,3"
 python train_unet.py --data_dir /om2/user/yyf/CommonFate/scenes/ \
         --target normals \
         --top_level voronoi noise \
         --sub_level superquadric_2 superquadric_3 \
         --log_dir /om2/user/yyf/GestaltVision/runs/UNet/${run_name} \
         --checkpoint_dir /om2/user/yyf/GestaltVision/saved_models/UNet/${run_name} \
-        --frames_per_scene 6 \
+        --frames_per_scene 16 \
         --n_classes 3 \
-        --resize 256 \
-        --batch_size 16 \
+        --resize 128 \
+        --batch_size 4 \
+        --load_from_last_checkpoint
 

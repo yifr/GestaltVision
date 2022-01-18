@@ -34,7 +34,7 @@ parser.add_argument("--lr", type=float, default=1e-4, help="Learning Rate")
 parser.add_argument("--warmup_steps", type=int, default=2500, help="Warmup steps for learning rate")
 parser.add_argument("--grad_clip", type=float, default=0.05, help="Gradient Clipping")
 parser.add_argument(
-    "--train_iters", type=int, default=10e4, help="Number of training steps"
+    "--train_iters", type=int, default=50e4, help="Number of training steps"
 )
 parser.add_argument("--log_every", type=int, default=50, help="How often to log losses")
 parser.add_argument(
@@ -357,7 +357,8 @@ if __name__ == "__main__":
             model_weights = checkpoint.get("model")
             model.load_state_dict(model_weights)
             step = checkpoint["step"]
+            print("LOADED MODEL WEIGHTS. STARTING TRAINING AT STEP: ", step)
         else:
             print("NO MODEL FOUND ==> STARTING TRAINING FROM SCRATCH")
-
+            sys.exit()
     train(model, dataloader, args, step)
