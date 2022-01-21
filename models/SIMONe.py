@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
+import einops
 from position_encoding import PositionalEncoding3D, PositionalEncodingPermute3D
 
 
@@ -144,7 +145,7 @@ class SIMONE(nn.Module):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    def reparameterize(self, dist, fill_tensor=None):
+    def reparameterize(self, dist, repeat_pattern=""):
         """ Draws samples from unit spherical Guassian
 
             Params:
@@ -152,22 +153,20 @@ class SIMONE(nn.Module):
                 dist: torch.Tensor:
                     B x {K,T} x C tensor containing means+logvars for latents
                     tensor will be split in half to obtain means and logvars
-                fill_tensor: torch.Tensor:
-                    Tensor to fill samples
+                repeat_pattern: str:
+                    einops string equation for repeating tensor along dimensions
+
             Returns:
             --------
                 Samples with same size as fill_tensor tensor
         """
-        B = dist.shape[0]
         mu, logvar = torch.split(dist, dist.shape[-1] // 2, -1)
         std = torch.exp(logvar)
 
-        if fill_tensor is not None:
+        if repeat_pattern:
             # Broadcast means and stds to fill size
-            mu = torch.tile(mu, fill_tensor.shape).reshape(
-                *fill_tensor.shape, -1)
-            std = torch.tile(std, fill_tensor.shape).reshape(
-                *fill_tensor.shape, -1)
+            mu = einops.repeat(mu, repeat_pattern)
+            std = einops.repeat(std, repeat_pattern)
 
         eps = torch.randn_like(std)
         latents = mu + std * eps
@@ -232,15 +231,15 @@ class SIMONE(nn.Module):
             B, T, 1, 1, 1).permute(0, 1, 3, 4, 2)
 
         k_samples = []
-        for k in range(K):
-            fill_tensor = torch.zeros((B, H, W))
-            frame_latents = self.reparameterize(
-                frame_dists, fill_tensor=fill_tensor)
-            frame_latents = frame_latents.reshape(B, T, H, W, -1)
 
-            fill_tensor = torch.zeros((B, T, H, W))
+        for k in range(K):
+            # Broadcast temporal latents spatially
+            frame_latents = self.reparameterize(
+                frame_dists, repeat_pattern=f"b t d -> b t {H} {W} d")
+
+            # Broadcast object latents temporally and spatially
             object_latents = self.reparameterize(
-                object_dists[:, k], fill_tensor=fill_tensor)
+                object_dists[:, k], repeat_pattern=f"b d -> b {T} {H} {W} d")
 
             inputs = torch.cat(
                 [object_latents, frame_latents, decode_idxs, time_frames], dim=-1)
@@ -262,6 +261,7 @@ class SIMONE(nn.Module):
     def forward(self, x, decode_idxs=None):
         B, T, C, H, W = x.shape
         object_dists, frame_dists = self.encode(x)
+
         recons, mixture_logits_hat = self.decode(
             object_dists, frame_dists, (B, T, C, H, W))
 
@@ -310,7 +310,7 @@ class SIMONE(nn.Module):
 
 
 if __name__ == "__main__":
-    img = torch.rand((1, 10, 3, 128, 128))
+    img = torch.rand((4, 16, 3, 128, 128))
     model = SIMONE(img.shape, 128)
     optim = torch.optim.Adam(model.parameters(), lr=2e-4)
     for i in range(10):
