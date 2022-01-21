@@ -60,6 +60,10 @@ class SIMONE(nn.Module):
         transformer_feedforward=1024,
         cnn_decoder_dim_size=128,
         K_slots=8,
+        recon_alpha=1,
+        obj_kl_beta=1e-8,
+        frame_kl_beta=1e-8,
+        pixel_logvar=0.08
     ):
         """
         SIMONe model
@@ -133,9 +137,10 @@ class SIMONE(nn.Module):
                                stride=1, padding=0, dim=1)
         self.layer_norm = nn.LayerNorm((T, 4, H * W))
 
-        self.recon_alpha = 1
-        self.obj_kl_beta = 1
-        self.frame_kl_beta = 1
+        self.recon_alpha = recon_alpha
+        self.obj_kl_beta = obj_kl_beta
+        self.frame_kl_beta = frame_kl_beta
+        self.pixel_logvar = pixel_logvar
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -262,7 +267,7 @@ class SIMONE(nn.Module):
 
         mixture_logits = F.softmax(mixture_logits_hat, -2)
         pixel_means = torch.distributions.Normal(
-            recons, torch.ones_like(recons))
+            recons, torch.ones_like(recons) * self.pixel_logvar)
         p_x = torch.sum(mixture_logits * pixel_means.rsample(), dim=-2)
         p_x = p_x.reshape(B, T, 3, H, W)
 
@@ -307,10 +312,11 @@ class SIMONE(nn.Module):
 if __name__ == "__main__":
     img = torch.rand((1, 10, 3, 128, 128))
     model = SIMONE(img.shape, 128)
-    out = model(img)
-
-    losses = model.compute_loss(img, out)
-
-    print(losses)
-    losses["total_loss"].backward()
-    print("Backward pass done")
+    optim = torch.optim.Adam(model.parameters(), lr=2e-4)
+    for i in range(10):
+        optim.zero_grad()
+        out = model(img)
+        losses = model.compute_loss(img, out)
+        losses["total_loss"].backward()
+        print(losses["total_loss"].item())
+        optim.step()
