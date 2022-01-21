@@ -64,7 +64,8 @@ class SIMONE(nn.Module):
         recon_alpha=1,
         obj_kl_beta=1e-8,
         frame_kl_beta=1e-8,
-        pixel_logvar=0.08
+        pixel_logvar=0.08,
+        device="cuda"
     ):
         """
         SIMONe model
@@ -141,9 +142,9 @@ class SIMONE(nn.Module):
         self.recon_alpha = recon_alpha
         self.obj_kl_beta = obj_kl_beta
         self.frame_kl_beta = frame_kl_beta
-        self.pixel_logvar = pixel_logvar
+        self.pixel_logvar = torch.tensor(pixel_logvar).to(device)
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
 
     def reparameterize(self, dist, repeat_pattern=""):
         """ Draws samples from unit spherical Guassian
@@ -222,14 +223,15 @@ class SIMONE(nn.Module):
 
         assert H == W
         time_idxs = torch.linspace(0, 1, T)
-        time_frames = torch.ones((B, T, H, W, 1))
+        time_frames = torch.ones((B, T, H, W, 1)).to(self.device)
         for t in range(T):
             time_frames[:, t] = time_frames[:, t] * time_idxs[t]
 
         spatial_pos = torch.linspace(-1, 1, H)
-        decode_idxs = torch.stack(torch.meshgrid(spatial_pos, spatial_pos)).repeat(
+        decode_idxs = torch.stack(torch.meshgrid(spatial_pos, spatial_pos, indexing="xy")).repeat(
             B, T, 1, 1, 1).permute(0, 1, 3, 4, 2)
 
+        decode_idxs = decode_idxs.to(self.device)
         k_samples = []
 
         for k in range(K):
@@ -248,7 +250,6 @@ class SIMONE(nn.Module):
             inputs = inputs.reshape(B * T, channels,  -1)
 
             out = self.decoder(inputs)
-            # out = self.layer_norm(out)
             out = out.reshape(B, T, H, W, -1)
 
             k_samples.append(out)
@@ -267,7 +268,7 @@ class SIMONE(nn.Module):
 
         mixture_logits = F.softmax(mixture_logits_hat, -2)
         pixel_means = torch.distributions.Normal(
-            recons, torch.ones_like(recons) * self.pixel_logvar)
+            recons, torch.exp(0.5 * self.pixel_logvar))
         p_x = torch.sum(mixture_logits * pixel_means.rsample(), dim=-2)
         p_x = p_x.reshape(B, T, 3, H, W)
 
@@ -296,27 +297,32 @@ class SIMONE(nn.Module):
             (self.frame_kl_beta / frame_mean.shape[1])
 
         B, T, C, H, W = inputs.shape
-        K = obj_mean.shape[1]
-        recon_scaling = self.recon_alpha / T * H * W
-        print(inputs.shape, recons.shape)
-        recon_loss = F.binary_cross_entropy(
-            inputs, recons.detach(), reduction="sum") * recon_scaling
-
+        recon_scaling = self.recon_alpha / (T * H * W)
+        # recons = F.sigmoid(recons)
+        # recon_loss = F.binary_cross_entropy(recons, inputs, reduction="sum") * recon_scaling
+        recon_loss = F.mse_loss(recons, inputs) * recon_scaling
         total_loss = recon_loss + obj_kl + frame_kl
 
         return {"total_loss": total_loss,
-                "obj_kl": obj_kl,
-                "frame_kl": frame_kl}
+                "obj_kl_loss": obj_kl,
+                "frame_kl_loss": frame_kl}
 
 
 if __name__ == "__main__":
-    img = torch.rand((4, 16, 3, 128, 128))
-    model = SIMONE(img.shape, 128)
+    device = "cpu"
+    img = torch.rand(1, 10, 3, 128, 128).to(device)
+    model = SIMONE(img.shape, 128, device=device).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=2e-4)
-    for i in range(10):
+    for i in range(1000):
         optim.zero_grad()
         out = model(img)
         losses = model.compute_loss(img, out)
         losses["total_loss"].backward()
         print(losses["total_loss"].item())
         optim.step()
+
+    from ..utils import make_video
+    make_video([img.detach().cpu().numpy(), out["recons"].detach().cpu().numpy()],
+               titles=["ground truth", "reconstruction"],
+               output_name="simone_overfit_test_1")
+

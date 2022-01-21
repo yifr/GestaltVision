@@ -193,7 +193,7 @@ class Gestalt(Dataset):
         if image_pass == "masks":
             images = images.permute(1, 0, 2, 3, 4)  # N_OBJECTS x T x C x H x W
 
-        return images.to(self.device)
+        return images
 
     def load_config_data(self, config_pass, scene, frame_idxs):
         scene = self.get_scenes(scene_idx)

@@ -6,7 +6,7 @@ import metrics
 import numpy as np
 import torch.nn.functional as F
 
-from models import SAVi
+from models import SIMONe
 from data import gestalt
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -17,17 +17,10 @@ from argparse import ArgumentParser
 parser = ArgumentParser()
 
 # Model params
-parser.add_argument(
-    "--num_slots", type=int, default=5, help="Number of slots in SAVi model"
-)
-parser.add_argument(
-    "--num_iterations", type=int, default=2, help="Number of iterations"
-)
-parser.add_argument("--cue", type=str, default="masks", help="Object Cue for SAVi")
 
 # Data params
-parser.add_argument("--num_frames", type=int, default=6, help="Frames to train on")
-parser.add_argument("--batch_size", type=int, default=16, help="Batch Size")
+parser.add_argument("--num_frames", type=int, default=16, help="Frames to train on")
+parser.add_argument("--batch_size", type=int, default=4, help="Batch Size")
 
 # Training params
 parser.add_argument("--lr", type=float, default=1e-4, help="Learning Rate")
@@ -36,7 +29,7 @@ parser.add_argument("--grad_clip", type=float, default=0.05, help="Gradient Clip
 parser.add_argument(
     "--train_iters", type=int, default=50e4, help="Number of training steps"
 )
-parser.add_argument("--log_every", type=int, default=50, help="How often to log losses")
+parser.add_argument("--log_every", type=int, default=10, help="How often to log losses")
 parser.add_argument(
     "--eval_every", type=int, default=1000, help="How often to run eval"
 )
@@ -48,10 +41,10 @@ parser.add_argument(
     "--plot_n_videos", type=int, default=4, help="Number of videos to plot"
 )
 parser.add_argument(
-    "--log_dir", type=str, default="/om2/user/yyf/GestaltVision/runs/SAVi"
+    "--log_dir", type=str, default="/om2/user/yyf/GestaltVision/runs/SIMONe/batch_size=1_frames=10"
 )
 parser.add_argument(
-    "--checkpoint_dir", type=str, default="/om2/user/yyf/GestaltVision/models/SAVi"
+    "--checkpoint_dir", type=str, default="/om2/user/yyf/GestaltVision/models/SIMONe/batch_size=1_frames=10"
 )
 parser.add_argument("--data_dir", type=str, default="/om/user/yyf/CommonFate/scenes")
 parser.add_argument(
@@ -189,26 +182,21 @@ def eval(model, data_loader, args, step, writer=None, save=True):
 
 
 def train(model, data_loader, args, step=0):
-    def train_step(batch, metric, model, optim):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    def train_step(batch, model, optim):
         optim.zero_grad()
-        images = batch["images"]
-        flows = batch["flows"]
-        if args.cue == "masks":
-            # shape is B x max_num_objects x T x C x H x W
-            cue = batch[args.cue][:, :, 0, ...]  # Only take first time step of a cue
-        else:
-            cue = batch[args.cue][:, 0]
+        images = batch["images"].to(device)
 
-        out = model(images, cues=cue)
-        loss = metric(out["recon_combined"], flows)
+        out = model(images)
+        losses = model.compute_loss(images, out)
+        loss = losses["total_loss"]
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         loss.backward()
         optim.step()
 
-        return out, loss.item()
+        return out, losses
 
     optim = torch.optim.Adam(model.parameters(), lr=args.lr)
-    metric = F.mse_loss
     writer = SummaryWriter(args.log_dir)
 
     prof = torch.profiler.profile(
@@ -223,61 +211,30 @@ def train(model, data_loader, args, step=0):
 
         for i, batch in enumerate(tqdm(data_loader)):
             lr = learning_rate_update(optim, step, args.warmup_steps, args.lr, args.train_iters)
-            out, loss = train_step(batch, metric, model, optim)
+            out, losses = train_step(batch, model, optim)
             if i % args.log_every == 0:
-                # Reshape masks for foreground ari metric
-                pred_masks = out["masks"].detach()
-                gt_masks = (
-                    batch["masks"].detach().sum(dim=3, keepdim=True)
-                )  # Combine RGB channels into one
-                B, N, T, C, H, W = gt_masks.shape
-                gt_masks = gt_masks.reshape((B, N, T, H, W, C))
-                pred_masks = pred_masks.transpose(1, 2)
+                recons = out["recons"].detach().cpu().numpy()
+                images = batch["images"].detach().cpu().numpy()
 
-                pred_groups = pred_masks.reshape(args.batch_size, N, -1).permute(
-                    0, 2, 1
-                )
-                true_groups = gt_masks.reshape(args.batch_size, N, -1).permute(0, 2, 1)
-                fg_ari = metrics.adjusted_rand_index(true_groups, pred_groups)
-
-                gt_masks = gt_masks[:, 1:, ...].sum(
-                    dim=1
-                )  # Combine individual mask slots and ignore backgrounds
-                pred_masks = pred_masks.sum(dim=1)
-                mean_IOU = metrics.mean_IOU(gt_masks, pred_masks)
-
-                gt_masks = gt_masks.reshape(B, T, C, H, W)
-                pred_masks = pred_masks.reshape(B, T, C, H, W)
-                print("recons", out["recons"].shape, out["recons"].sum(dim=2).shape)
-                recons = out["recons"].sum(dim=2).reshape(B, T, 3, H, W)
-
-                writer.add_scalar("train/loss", loss, step)
-                writer.add_scalar("train/fg-ARI", fg_ari.mean(), step)
-                writer.add_scalar("train/mean_IOU", mean_IOU, step)
+                loss = losses["total_loss"].item()
+                obj_kl_loss = losses["obj_kl_loss"].item()
+                frame_kl_loss = losses["frame_kl_loss"].item()
+                writer.add_scalar("train/total_loss", loss, step)
+                writer.add_scalar("train/obj_kl_loss", obj_kl_loss, step)
+                writer.add_scalar("train/frame_kl_loss", frame_kl_loss, step)
 
                 writer.add_video(
-                    "train/gt_flows", batch["flows"][: args.plot_n_videos], step
+                    "train/input_video", images[: args.plot_n_videos], step
                 )
                 writer.add_video(
-                    "train/pred_flows",
-                    out["recon_combined"][: args.plot_n_videos],
-                    step,
+                    "train/reconstructed_video", recons[: args.plot_n_videos], step
                 )
-                writer.add_video(
-                    "train/input_video", batch["images"][: args.plot_n_videos], step
-                )
-                writer.add_video("train/gt_masks", gt_masks[: args.plot_n_videos], step)
-                writer.add_video(
-                    "train/pred_masks", pred_masks[: args.plot_n_videos], step
-                )
-                writer.add_video("train/slot_recons", recons[: args.plot_n_videos], step)
 
                 print("Step: {}, Loss: {}".format(step, loss))
-                print("\tFG-ARI: {}, Mean IOU: {}".format(fg_ari.mean(), mean_IOU))
                 prof.step()
 
             if step % args.eval_every == 0 and step > 0:
-                eval(model, data_loader, args, step, writer)
+                # eval(model, data_loader, args, step, writer)
 
                 checkpoint = {"model": model.state_dict(), "optim": optim, "step": step}
                 if not os.path.exists(args.checkpoint_dir):
@@ -309,18 +266,7 @@ def load_latest(args):
     checkpoints.sort()
     return torch.load(checkpoints[-1])
 
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-
-    # initialize the process group
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
-
-def cleanup():
-    dist.destroy_process_group()
-
- __name__ == "__main__":
-    from torch.nn.parallel import DistributedDataParallel as DDP
+if __name__ == "__main__":
 
     dataloader = DataLoader(
         gestalt.Gestalt(
@@ -329,14 +275,15 @@ def cleanup():
             sub_level=args.sub_level,
             frames_per_scene=args.num_frames,
             train_split=0.95,
+            passes=["images"]
         ),
         batch_size=args.batch_size,
         shuffle=True,
     )
 
-    model = SAVi.SlotAttentionVideo(
-        num_slots=args.num_slots, slot_iterations=args.num_iterations
-    ).float()
+    ex = next(iter(dataloader))["images"]
+    print(ex.shape)
+    model = SIMONe.SIMONE(ex.shape, 128)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if args.multi_gpu:
@@ -355,4 +302,5 @@ def cleanup():
         else:
             print("NO MODEL FOUND ==> STARTING TRAINING FROM SCRATCH")
             sys.exit()
+
     train(model, dataloader, args, step)

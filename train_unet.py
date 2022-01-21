@@ -52,8 +52,8 @@ def train(args, train_loader, model, start_step=0):
 
     def train_step(data, criterion, optimizer, train=True):
         optimizer.zero_grad()
-        images = data["images"]
-        target = data[args.target]
+        images = data["images"].cuda()
+        target = data[args.target].cuda()
         print(images.shape, target.shape)
         loss, metrics = model.get_metrics(images, target, criterion, target_name=args.target)
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
@@ -104,6 +104,9 @@ def train(args, train_loader, model, start_step=0):
                         f"Running evaluation step on {len(train_loader)} test batches..."
                     )
                     for test_step, batch in tqdm(enumerate(train_loader)):
+                        if test_step >= 100:
+                            break
+                        torch.cuda.empty_cache()
                         # print(data.shape)
                         loss, metrics = model.get_metrics(
                             batch["images"], batch[target], criterion, target_name=args.target
@@ -199,6 +202,7 @@ if __name__ == "__main__":
         "--train_iters", type=int, default=10e4, help="Number of training steps"
     )
 
+    from torch.nn import DataParallel
 
     args = parser.parse_args()
 
@@ -207,12 +211,13 @@ if __name__ == "__main__":
         n_classes=args.n_classes,
     )
     print(args.top_level, args.sub_level)
+
     train_data = DataLoader(
         gestalt.Gestalt(args.data_dir, frames_per_scene=args.frames_per_scene,
                         top_level=args.top_level,
                         sub_level=args.sub_level,
                         passes=["images", args.target],
-                        train_split=0.9,
+                        train_split=0.90,
                         resolution=(args.resize, args.resize)),
         batch_size=args.batch_size,
         shuffle=True,
@@ -225,6 +230,7 @@ if __name__ == "__main__":
             def get_last_checkpoint(checkpoint_dir, run_name):
                 path = os.path.join(checkpoint_dir, run_name)
                 if not os.path.exists(path):
+                    print(f"{path} does not exist")
                     return None
                 files = os.listdir(path)
                 files = [f for f in files if f.startswith("checkpoint")]
@@ -233,7 +239,7 @@ if __name__ == "__main__":
 
             checkpoint_path = get_last_checkpoint(args.checkpoint_dir, args.run_name)
             if checkpoint_path is None:
-                print("No checkpoint found. Exiting...")
+                print(f"No checkpoint found at {checkpoint_path}. Exiting...")
                 sys.exit(1)
         else:
             checkpoint_path = args.load_checkpoint
