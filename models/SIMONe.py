@@ -88,7 +88,8 @@ class SIMONE(nn.Module):
         self.I, self.J = 8, 8  # size of output feature map for each frame
 
         # CNN Outputs 8*8 feature map for each frame
-        self.position_embedding = PositionalEncodingPermute3D(self.I * self.J)
+        self.position_embedding1 = PositionalEncodingPermute3D(128)
+        self.position_embedding2 = PositionalEncodingPermute3D(128)
 
         n_layers = np.log2(W / 8)
         self.cnn_encoder = ConvNet(
@@ -193,21 +194,23 @@ class SIMONE(nn.Module):
         for i in range(x.shape[1]):
             frame_encoding = self.cnn_encoder(x[:, i])
             frames.append(frame_encoding)
-        frames = torch.stack(frames, dim=1)
-        print(frames.shape)
-        frames = self.position_embedding(frames)
+        frames = torch.stack(frames, dim=1).reshape(B, T, self.I, self.J, -1)
+        frames_emb = self.position_embedding1(frames)
+        frames = frames + frames_emb
 
         conv_frames_shape = frames.shape
         flattened_frames = frames.reshape((B, -1, self.transformer_dim))
         x = self.transformer_1(flattened_frames)
 
         # Reshape and spatial pool
-        x = x.reshape(conv_frames_shape)
+        x = x.reshape(B, T, -1, self.I, self.J)
         if self.K_slots < self.I * self.J:
             x = self.spatial_pool(x)
+            x = x.reshape((B, T, self.I // 2, self.J // 2, -1))
 
-        x = self.position_embedding(x)
-        B, T, C, I, J = x.shape
+        x_emb = self.position_embedding2(x)
+        x = x + x_emb
+        B, T, I, J, C = x.shape
         K = I * J
         x = x.reshape(B, -1, self.transformer_dim)
         x = self.transformer_2(x)

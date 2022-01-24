@@ -37,6 +37,7 @@ class Gestalt(Dataset):
         train_split: float: percentage of scenes to allocate to training set
         random_seed: int: random seed for train/test split
         color_channels: str: "RGB" or "L" for black and white
+        shuffle: whether or not to shuffle loaded data
     """
 
     def __init__(
@@ -54,6 +55,7 @@ class Gestalt(Dataset):
         train_split=0.9,
         random_seed=42,
         color_channels="RGB",
+        shuffle=False
     ):
 
         self.root_dir = root_dir
@@ -75,18 +77,28 @@ class Gestalt(Dataset):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.training = training
         self.color_channels = color_channels
+        self.shuffle = shuffle
 
         self.train_scenes, self.test_scenes = self.get_scene_paths()
         print(f"{len(self.train_scenes)} # training scenes, {len(self.test_scenes)} # test scenes")
+
         if self.use_h5:
             with h5.File(self.root_dir, "r", swmr=True, libver="latest") as f:
-                scene = f[self.train_scenes[0]]
+                if len(self.train_scenes) > 1:
+                    scene = f[self.train_scenes[0]]
+                else:
+                    scene = f[self.test_scenes[0]]
+
                 images = scene["images"]["images"][:]
-                print(self.train_scenes[0], scene, list(scene.keys()), images.shape)
                 self.real_frames_per_scene = images.shape[0]
         else:
+            if len(self.train_scenes) > 1:
+                scene = self.train_scenes[0]
+            else:
+                scene = self.test_scenes[0]
+
             self.real_frames_per_scene = len(
-                glob(os.path.join(self.train_scenes[0], "images", "*.png"))
+                glob(os.path.join(scene, "images", "*.png"))
             )
         if self.frame_sampling_method == "consecutive":
             self.scene_splits = int(self.real_frames_per_scene / self.frames_per_scene)
@@ -99,7 +111,10 @@ class Gestalt(Dataset):
                 keys = list(f[top_level][sub_level].keys())
                 return [f"{top_level}/{sub_level}/{key}" for key in keys]
         else:
-            data_path_pattern = os.path.join(self.root_dir, top_level, "*" + sub_level)
+            data_path_pattern = os.path.join(self.root_dir, top_level, sub_level)
+            if not os.path.exists(data_path_pattern):
+                raise ValueError(f"Could not find data at path: {data_path_pattern}")
+
             data_dir = glob(data_path_pattern)[0]
             files = os.listdir(data_dir)
             return [os.path.join(data_dir, f) for f in files]
@@ -126,13 +141,23 @@ class Gestalt(Dataset):
                         test_scenes.append(f)
                         test_idx += 1
 
-        np.random.seed(self.random_seed)
-        np.random.shuffle(train_scenes)
-        np.random.seed(self.random_seed)
-        np.random.shuffle(test_scenes)
+        if self.shuffle:
+            np.random.seed(self.random_seed)
+            np.random.shuffle(train_scenes)
+            np.random.seed(self.random_seed)
+            np.random.shuffle(test_scenes)
+
         return train_scenes, test_scenes
 
     def get_scenes(self, scene_idx=-1):
+        """ Returns path info for a given scene
+
+            Params:
+            -------
+            scene_index: int
+                if < 0, return all scene path info
+                otherwise, return specified index
+        """
         if self.training:
             scenes = self.train_scenes
         else:
@@ -230,7 +255,8 @@ class Gestalt(Dataset):
         return length
 
     def get_info(self, idx):
-        scene = int(idx / self.real_frames_per_scene)
+        scene = idx // self.scene_splits
+
         if self.frame_sampling_method == "consecutive":
             scene_block = idx % self.scene_splits
             start_frame = self.frames_per_scene * scene_block
@@ -254,9 +280,13 @@ class Gestalt(Dataset):
 
     def __getitem__(self, idx):
         scene, frame_idxs, scene_dir = self.get_info(idx)
+        data = {}
+
+        data["scene"] = scene
+        data["frame_idxs"] = frame_idxs
+        data["scene_dir"] = scene_dir
 
         # Load image passes
-        data = {}
         for image_pass in self.passes:
             res = []
             if image_pass in IMAGE_PASS_OPTS:
@@ -284,11 +314,11 @@ if __name__ == "__main__":
         Gestalt(
             root_dir="/om2/user/yyf/CommonFate/scenes/",
             passes=["images", "flows", "depths", "masks"],
-            top_level=["voronoi", "noise"],
-            sub_level=["superquadric_1", "superquadric_2"],
-            frames_per_scene=6
+            top_level=["test_voronoi", "test_noise", "test_wave"],
+            sub_level=["superquadric_1", "superquadric_2", "superquadric_3", "superquadric_4"],
+            frames_per_scene=64
         ),
-        batch_size=4,
+        batch_size=1,
     )
     print(len(data))
     batch = next(iter(data))
