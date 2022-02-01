@@ -8,14 +8,13 @@
 #SBATCH --constraint=48GB
 #SBATCH -p tenenbaum
 #SBATCH --mem=48G
-#SBATCH --out=savi_tex=all_shapes=2,3_slots=4.out
+#SBATCH --out=savi_tex=all_shapes=2,3_slots=5.out
 
-run_name="tex=all_shapes=2,3_slots=4"
+run_name="tex=all_shapes=2,3_slots=5"
 python train_savi.py --data_dir /om2/user/yyf/CommonFate/scenes/ \
         --top_level voronoi noise \
         --sub_level superquadric_2 superquadric_3 \
         --log_dir /om2/user/yyf/GestaltVision/runs/SAVI/${run_name} \
         --checkpoint_dir /om2/user/yyf/GestaltVision/saved_models/SAVI/${run_name} \
         --batch_size 8 \
-        --load_latest_model
 

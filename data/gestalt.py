@@ -9,7 +9,7 @@ from PIL import Image
 from glob import glob
 
 IMAGE_PASS_OPTS = ["images", "masks", "depths", "flows", "normals"]
-STATE_PASS_OPTS = ["location", "center_of_mass", "shape_params", "bounding_box"]
+STATE_PASS_OPTS = ["location", "center_of_mass", "shape_params", "bounding_boxes"]
 
 
 class Gestalt(Dataset):
@@ -181,10 +181,11 @@ class Gestalt(Dataset):
             else:
                 pass_dir = os.path.join(scene, image_pass)
                 path = os.path.join(pass_dir, f"Image{idx:04d}.png")
-                img = Image.open(path).convert(color_channels)
                 if image_pass == "masks":
+                    img = Image.open(path).convert("L")
                     resample = Image.NEAREST
                 else:
+                    img = Image.open(path).convert("RGB")
                     resample = Image.BICUBIC
                 img = img.resize(self.resolution, resample=resample)
                 img = np.array(img).astype(np.uint8)
@@ -206,7 +207,7 @@ class Gestalt(Dataset):
                         mask_idxs = m > 0
                         m[mask_idxs] = 255.0
                     unique_masks.append(m)
-                img = torch.stack(unique_masks, 0)
+                img = torch.stack(unique_masks, 1)
 
             images.append(img)
 
@@ -221,7 +222,72 @@ class Gestalt(Dataset):
         return images
 
     def load_config_data(self, config_pass, scene, frame_idxs):
-        scene = self.get_scenes(scene_idx)
+        scene = self.get_scenes(scene)
+        if config_pass == "bounding_boxes":
+            target = {}
+            bounding_boxes = []
+            areas = []
+            all_masks = []
+            for frame_idx in frame_idxs:
+                mask_path = os.path.join(scene, "masks", f"Image{frame_idx:04d}.png")
+                mask = Image.open(mask_path).convert("L")
+                mask = mask.resize(self.resolution, resample=Image.NEAREST)
+
+                mask = np.array(mask)
+                obj_ids = np.unique(mask)
+                obj_ids = obj_ids[1:] # remove background
+
+                masks = mask == obj_ids[:, None, None]
+                num_objs = len(obj_ids)
+                boxes = []
+
+                for obj_id in obj_ids:
+                    pos = np.where(mask == obj_id)
+                    xmin = np.min(pos[1])
+                    xmax = np.max(pos[1])
+                    ymin = np.min(pos[0])
+                    ymax = np.max(pos[0])
+                    area = (ymax - ymin) * (xmax - xmin)
+                    if area < 1 or xmin >= xmax or ymin >= ymax:
+                        print(mask_path, "INCORRECT MASKS")
+                        print("area", area, "coords", ((xmin, ymin), (xmax, ymax)))
+                        if xmin >= xmax:
+                            xmax += 1
+                        if ymin >= ymax:
+                            ymax += 1
+
+                    boxes.append([xmin, ymin, xmax, ymax])
+
+                boxes = torch.as_tensor(boxes, dtype=torch.float32)
+                masks = torch.as_tensor(masks, dtype=torch.uint8)
+
+                if boxes.shape[0] == 0:
+                    print("returning empty boxes for scene", mask_path)
+                    return {"masks": torch.tensor([]),
+                            "boxes": torch.tensor([]),
+                            "labels": torch.tensor([])}
+
+                area = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])
+                bounding_boxes.append(boxes)
+                areas.append(area)
+                all_masks.append(masks)
+
+            bounding_boxes = torch.stack(bounding_boxes, dim=0)
+            areas = torch.stack(areas, dim=0)
+            masks = torch.stack(all_masks, dim=0)
+            labels = torch.ones((masks.shape[1], ), dtype=torch.int64)
+            iscrowd = torch.zeros((bounding_boxes.shape[1], ), dtype=torch.int64)
+
+            if labels is None:
+                print(mask_path)
+
+            targets = {"boxes": bounding_boxes, "areas": areas,
+                    "labels": labels,
+                    "iscrowd": iscrowd,
+                    "masks": masks
+                    }
+            return targets
+
         config_path = os.path.join(scene, "scene_config.pkl")
         with open(config_path, "rb") as f:
             config_data = pickle.load(f)["objects"]
@@ -236,10 +302,6 @@ class Gestalt(Dataset):
                 data.append(obj_params["shape_params"])
             elif config_pass == "center_of_mass":
                 config_pass = "location"
-            elif config_pass == "bounding_box":
-                # TODO
-                print("BOUNDING BOX PASSES NOT YET IMPLEMENTED")
-                pass
             else:
                 config_data = obj_params[config_pass][frame_idxs]
                 data.append(config_data)
@@ -293,18 +355,29 @@ class Gestalt(Dataset):
                 color_channels = "RGB"
                 normalize = True
 
+                # Flows are zero indexed, everything else is 1 indexed
+                if image_pass == "flows":
+                    frame_idxs = frame_idxs - 1
+                    if frame_idxs[-1] == (self.real_frames_per_scene - 1):
+                        frame_idxs[-1] = frame_idxs[-2]
+
                 res = self.load_image_data(
                     image_pass, scene, frame_idxs, color_channels, normalize
                 )
             elif image_pass in STATE_PASS_OPTS:
                 res = self.load_config_data(image_pass, scene, frame_idxs)
+                if image_pass == "bounding_boxes":
+                    for key in res:
+                        data[key] = res[key]
+                    continue
             else:
-                print(f"Unknown pass specified: {_pass}")
+                print(f"Unknown pass specified: {image_pass}")
                 raise ValueError
 
             data[image_pass] = res
 
-        return data
+
+        return data["images"], data
 
 
 if __name__ == "__main__":

@@ -130,20 +130,20 @@ def eval(model, data_loader, args, step, writer=None, save=True):
         for i, batch in tqdm(enumerate(data_loader)):
             if i == 100:
                 break
-            images = batch["images"]
-            flows = batch["flows"]
+            images = batch["images"].to("cuda")
+            flows = batch["flows"].to("cuda")
             if args.cue == "masks":
                 cue = batch[args.cue][:, :, 0]  # Only take first time step of a cue
             else:
                 cue = batch[args.cue][:, 0]
-            out = model(images, cues=cue)
+            out = model(images, cues=cue.to("cuda"))
             pred_flows = out["recon_combined"]
             loss += F.mse_loss(flows, pred_flows).item()
 
             pred_masks = out["masks"].detach()
             gt_masks = (
                 batch["masks"].detach().sum(dim=3, keepdim=True)
-            )  # Combine RGB channels into one
+            ).to("cuda")  # Combine RGB channels into one
             B, N, T, C, H, W = gt_masks.shape
             gt_masks = gt_masks.reshape((B, N, T, H, W, C))
             pred_masks = pred_masks.transpose(1, 2)
@@ -191,15 +191,15 @@ def eval(model, data_loader, args, step, writer=None, save=True):
 def train(model, data_loader, args, step=0):
     def train_step(batch, metric, model, optim):
         optim.zero_grad()
-        images = batch["images"]
-        flows = batch["flows"]
+        images = batch["images"].to("cuda")
+        flows = batch["flows"].to("cuda")
         if args.cue == "masks":
             # shape is B x max_num_objects x T x C x H x W
             cue = batch[args.cue][:, :, 0, ...]  # Only take first time step of a cue
         else:
             cue = batch[args.cue][:, 0]
 
-        out = model(images, cues=cue)
+        out = model(images, cues=cue.to("cuda"))
         loss = metric(out["recon_combined"], flows)
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         loss.backward()
@@ -229,7 +229,7 @@ def train(model, data_loader, args, step=0):
                 pred_masks = out["masks"].detach()
                 gt_masks = (
                     batch["masks"].detach().sum(dim=3, keepdim=True)
-                )  # Combine RGB channels into one
+                ).to("cuda")  # Combine RGB channels into one
                 B, N, T, C, H, W = gt_masks.shape
                 gt_masks = gt_masks.reshape((B, N, T, H, W, C))
                 pred_masks = pred_masks.transpose(1, 2)
@@ -319,7 +319,7 @@ def setup(rank, world_size):
 def cleanup():
     dist.destroy_process_group()
 
- __name__ == "__main__":
+if __name__ == "__main__":
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     dataloader = DataLoader(

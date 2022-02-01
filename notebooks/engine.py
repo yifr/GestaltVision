@@ -25,9 +25,19 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, sc
         )
 
     for images, targets in metric_logger.log_every(data_loader, print_freq, header):
-        images = list(image.to(device).squeeze(0) for image in images)
-        targets = [{k: v.to(device).squeeze(0) for k, v in t.items()} for t in targets]
-        
+        if any(t["masks"].shape[0] == 0 for t in targets):
+            continue
+
+        images = list(image.squeeze(0).to(device) for image in images)
+        targets = [{k: v.to(device) for k, v in (
+            ("masks", t["masks"]), ("labels", t["labels"]), ("boxes", t["boxes"]))}
+            for t in targets]
+
+        for t in targets:
+            t["masks"] = t["masks"].squeeze(0)
+            t["boxes"] = t["boxes"].squeeze(0)
+
+
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             loss_dict = model(images, targets)
             losses = sum(loss for loss in loss_dict.values())

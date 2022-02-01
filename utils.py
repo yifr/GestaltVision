@@ -17,7 +17,6 @@ def make_video(sequence, titles=[], output_name=None, output_dir="figures", form
         fps: int: frames per second
 
     """
-
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
@@ -25,19 +24,21 @@ def make_video(sequence, titles=[], output_name=None, output_dir="figures", form
 
     if type(sequence) == list:
         columns = len(sequence)
-        sequence = np.array(sequence)
+        seq_len = len(sequence[0])
     elif type(sequence) == torch.tensor:
         sequence = sequence.detach().cpu().numpy()
+        seq_len = sequence.shape[0]
 
-    fig, ax = plt.subplots(1, columns, figsize=(12, 8))
-
-    if sequence.shape[1] == 3 or sequence.shape[1] == 1:
-        sequence = sequence.transpose(0, 2, 3, 1)
+    fig, ax = plt.subplots(nrows=1, ncols=columns, figsize=(8, 6))
+    plt.tight_layout()
 
     imgs = []
     if columns > 1:
         for column in range(columns):
-            im = ax[column].imshow(sequence[0][0])
+            if sequence[column][0].shape[-1] == 1:
+                im = ax[column].imshow(sequence[column][0], cmap="gray")
+            else:
+                im = ax[column].imshow(sequence[column][0])
             imgs.append(im)
         if len(titles) == columns:
             for column in range(columns):
@@ -64,13 +65,17 @@ def make_video(sequence, titles=[], output_name=None, output_dir="figures", form
             return [im]
         return [im]
 
-    ani = animation.FuncAnimation(fig, update, init_func=init, frames=sequence.shape[0])
+    ani = animation.FuncAnimation(fig, update, init_func=init, frames=seq_len)
 
     if format == "gif":
         writer = "imagemagick"
     elif format == "mp4":
         writer = "ffmpeg"
 
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
     if output_dir:
         ani.save(os.path.join(output_dir, output_name + "." + format), writer=writer, fps=fps)
+
     return fig, ani
