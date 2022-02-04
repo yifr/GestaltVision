@@ -37,6 +37,7 @@ class Gestalt(Dataset):
         train_split: float: percentage of scenes to allocate to training set
         random_seed: int: random seed for train/test split
         color_channels: str: "RGB" or "L" for black and white
+        masks_as_rgb: bool: if True returns masks in RGB format, otherwise returns masks in black and white
         shuffle: whether or not to shuffle loaded data
     """
 
@@ -55,6 +56,7 @@ class Gestalt(Dataset):
         train_split=0.9,
         random_seed=42,
         color_channels="RGB",
+        masks_as_rgb=True,
         shuffle=False
     ):
 
@@ -78,6 +80,7 @@ class Gestalt(Dataset):
         self.training = training
         self.color_channels = color_channels
         self.shuffle = shuffle
+        self.masks_as_rgb = masks_as_rgb
 
         self.train_scenes, self.test_scenes = self.get_scene_paths()
         print(f"{len(self.train_scenes)} # training scenes, {len(self.test_scenes)} # test scenes")
@@ -182,10 +185,13 @@ class Gestalt(Dataset):
                 pass_dir = os.path.join(scene, image_pass)
                 path = os.path.join(pass_dir, f"Image{idx:04d}.png")
                 if image_pass == "masks":
-                    img = Image.open(path).convert("L")
+                    if not self.masks_as_rgb:
+                        img = Image.open(path).convert("L")
+                    else:
+                        img = Image.open(path).convert(color_channels)
                     resample = Image.NEAREST
                 else:
-                    img = Image.open(path).convert("RGB")
+                    img = Image.open(path).convert(color_channels)
                     resample = Image.BICUBIC
                 img = img.resize(self.resolution, resample=resample)
                 img = np.array(img).astype(np.uint8)
@@ -217,7 +223,7 @@ class Gestalt(Dataset):
             images = images / 255.0
 
         if image_pass == "masks":
-            images = images.permute(1, 0, 2, 3, 4)  # N_OBJECTS x T x C x H x W
+            images = images.permute(2, 0, 1, 3, 4) # N_Objects x T x C x H x W
 
         return images
 
@@ -284,7 +290,6 @@ class Gestalt(Dataset):
             targets = {"boxes": bounding_boxes, "areas": areas,
                     "labels": labels,
                     "iscrowd": iscrowd,
-                    "masks": masks
                     }
             return targets
 
@@ -377,8 +382,36 @@ class Gestalt(Dataset):
             data[image_pass] = res
 
 
-        return data["images"], data
+        return data
 
+class MaskRCNNLoader(Dataset):
+    def __init__(self, root_dir="/om2/user/yyf/CommonFate/scenes",
+                 passes=["images", "bounding_boxes"],
+                 top_level=["test_voronoi", "test_noise", "test_wave"],
+                 sub_level=[f"superquadric_{i}" for i in range(1, 5)],
+                 frames_per_scene=64,
+                 training=True,
+                 resolution=(128, 128)):
+        super(Dataset, self).__init__()
+
+        self.data = Gestalt(root_dir=root_dir,
+                            passes=passes,
+                            top_level=top_level,
+                            sub_level=sub_level,
+                            frames_per_scene=frames_per_scene,
+                            training=training,
+                            resolution=resolution,
+                            masks_as_rgb=False)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        batch = self.data.__getitem__(idx)
+        images = batch["images"]
+        targets = batch
+
+        return images, targets
 
 if __name__ == "__main__":
     from torch.utils.data import DataLoader

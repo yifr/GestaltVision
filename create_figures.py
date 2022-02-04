@@ -9,9 +9,9 @@ from models import SAVi
 from torch.utils.data import DataLoader
 from utils import make_video
 
-model = SAVi.SlotAttentionVideo(num_slots=4)
+model = SAVi.SlotAttentionVideo(num_slots=5)
 
-model_checkpoint_dir = "/om2/user/yyf/GestaltVision/saved_models/SAVI/tex=all_shapes=2,3_slots=4"
+model_checkpoint_dir = "/om2/user/yyf/GestaltVision/saved_models/SAVI/tex=all_shapes=2,3_slots=5"
 models = os.listdir(model_checkpoint_dir)
 models.sort()
 
@@ -55,6 +55,7 @@ def plot_results(inputs, outputs):
     pred_masks = np.where(pred_masks > pred_masks.mean(), 1, 0)
 
     print(pred_masks.shape, slots[0].shape, recons.shape, gt_masks.shape, gt_flows.shape, images.shape)
+
     for vid in ["flows", "masks", "slots"]:
         base_title = f"savi_{tex}_{objs}_scene-{idx[0]}_{vid}"
         titles = ["Input Images", f"Ground truth {vid}", f"Predicted {vid}"]
@@ -67,7 +68,7 @@ def plot_results(inputs, outputs):
             sequences = [images, gt_masks, pred_masks]
 
         print("Generating video: ", base_title)
-        make_video(sequences, titles, base_title, format="mp4", output_dir="/om2/user/yyf/GestaltVision/figures/SAVI")
+        make_video(sequences, titles, base_title, format="mp4", output_dir="/om2/user/yyf/GestaltVision/figures/SAVI/slots=5")
 
 
 def cat_dict(d1, d2):
@@ -90,15 +91,16 @@ scene_idx = 0
 batch_inputs = {}
 batch_outputs = {}
 for i, batch in enumerate(data):
+
     scene = batch["scene"]
 
     images = batch["images"].to("cuda")
     flows = batch["flows"].to("cuda")
-    masks = batch["masks"].to("cuda")
-    out = model(images, cues=masks[:, :, 0])
-
+    masks = batch["masks"].to("cuda").permute((0, 2, 1, 3, 4, 5))    # B, T, M, C, H, W
+    out = model(images, cues=masks[:, 0, :])
     batch["masks"] = batch["masks"].permute(0, 2, 1, 3, 4, 5)
-    #out["masks"] = out["masks"].permute((0, 2, 1, 3, 4, 5))
+    out["masks"] = out["masks"].permute((0, 1, 2, 3, 4, 5)) # B, T, M, H, W, C
+
     if scene != scene_idx:
         scene_idx = scene
         plot_results(batch_inputs, batch_outputs)
@@ -110,3 +112,5 @@ for i, batch in enumerate(data):
     else:
         batch_inputs = cat_dict(batch_inputs, batch)
         batch_outputs = cat_dict(batch_outputs, out)
+
+    print(batch_inputs["masks"].shape, batch_outputs["masks"].shape)

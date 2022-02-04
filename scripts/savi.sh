@@ -12,9 +12,9 @@
 
 run_name="tex=all_shapes=2,3_slots=5"
 python train_savi.py --data_dir /om2/user/yyf/CommonFate/scenes/ \
-        --top_level voronoi noise \
-        --sub_level superquadric_2 superquadric_3 \
+        --top_level train_voronoi train_noise \
+        --sub_level superquadric_1 superquadric_2 superquadric_3 \
         --log_dir /om2/user/yyf/GestaltVision/runs/SAVI/${run_name} \
         --checkpoint_dir /om2/user/yyf/GestaltVision/saved_models/SAVI/${run_name} \
         --batch_size 8 \
-
+        --load_latest_model

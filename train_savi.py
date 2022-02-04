@@ -58,7 +58,7 @@ parser.add_argument(
     "--top_level",
     type=str,
     nargs="+",
-    default=["voronoi", "noise"],
+    default=["train_voronoi", "train_noise"],
     help="texture split",
 )
 parser.add_argument(
