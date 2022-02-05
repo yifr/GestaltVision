@@ -185,14 +185,15 @@ class Gestalt(Dataset):
                 pass_dir = os.path.join(scene, image_pass)
                 path = os.path.join(pass_dir, f"Image{idx:04d}.png")
                 if image_pass == "masks":
+                    resample = Image.NEAREST
                     if not self.masks_as_rgb:
                         img = Image.open(path).convert("L")
                     else:
                         img = Image.open(path).convert(color_channels)
-                    resample = Image.NEAREST
                 else:
                     img = Image.open(path).convert(color_channels)
                     resample = Image.BICUBIC
+
                 img = img.resize(self.resolution, resample=resample)
                 img = np.array(img).astype(np.uint8)
 

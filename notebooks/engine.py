@@ -9,8 +9,9 @@ from coco_eval import CocoEvaluator
 from coco_utils import get_coco_api_from_dataset
 
 
-def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, scaler=None):
+def train_one_epoch(model, optimizer, data_loader, device, epoch, save_path, print_freq, scaler=None):
     model.train()
+    step = 0
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = f"Epoch: [{epoch}]"
@@ -28,15 +29,17 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, sc
         if any(t["masks"].shape[0] == 0 for t in targets):
             continue
 
+        if any(t["boxes"].shape[0] == 0 for t in targets):
+            continue
+
         images = list(image.squeeze(0).to(device) for image in images)
         targets = [{k: v.to(device) for k, v in (
             ("masks", t["masks"]), ("labels", t["labels"]), ("boxes", t["boxes"]))}
             for t in targets]
 
         for t in targets:
-            t["masks"] = t["masks"].squeeze(0)
+            t["masks"] = t["masks"].squeeze(0).transpose(0, 1).squeeze(0)
             t["boxes"] = t["boxes"].squeeze(0)
-
 
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             loss_dict = model(images, targets)
@@ -67,6 +70,12 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq, sc
 
         metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        step += 1
+
+        if step % (print_freq * 10) = 0:
+            print("Saving model to: ", save_path)
+            torch.save({"weights": model.state_dict()}, save_path)
 
     return metric_logger
 
